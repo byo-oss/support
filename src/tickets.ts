@@ -45,7 +45,9 @@ export type CreateTicketInput = {
  * insert throws (e.g. a duplicate `emailMessageId`), deletes the ticket row
  * and rethrows the original error; the skipped number is acceptable. Emits
  * `support.ticket.created` only after both inserts succeeded. Never inside a
- * transaction. Trusts its caller for membership and visibility.
+ * transaction. Trusts its caller for membership and visibility. A
+ * `channel: "web"` create with a `userId` sets `requesterSeenAt = createdAt`;
+ * email-created tickets leave it null.
  */
 export async function createTicket(
   _rt: SupportRuntime,

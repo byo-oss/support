@@ -108,7 +108,6 @@ export type SupportFetchClient = {
       };
     };
   };
-  /** Used for raw-body uploads (`/support/upload`, `/support/agent/upload`). */
   /**
    * Raw requests the typed methods can't make: uploads (POST with a `Blob`
    * body and the file's `content-type`) and attachment downloads (GET; the
@@ -378,7 +377,12 @@ export type UseSupportUploadOptions = {
   ticketId: string;
   /** Upload through the agent endpoint. @default false */
   agent?: boolean;
-  /** Agent uploads for an internal note. @default false */
+  /**
+   * Agent uploads for an internal note. Must match the message kind (true
+   * for a note, false for a reply); mismatches fail with
+   * `ATTACHMENT_NOT_USABLE`. Call `reset()` when the reply/note toggle
+   * changes. @default false
+   */
   internal?: boolean;
 };
 

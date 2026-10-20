@@ -27,6 +27,8 @@ export type SupportLabels = {
   unreadCount: (count: number) => string;
   /** `#123` */
   ticketNumber: (number: number) => string;
+  /** A message or ticket time. Components show times only through this. @default formatRelativeTime */
+  relativeTime: (value: Date | string) => string;
 };
 
 export const defaultLabels: SupportLabels = {
@@ -57,6 +59,7 @@ export const defaultLabels: SupportLabels = {
   unreadCount: (count) =>
     count === 1 ? "1 unread ticket" : `${count} unread tickets`,
   ticketNumber: (number) => `#${number}`,
+  relativeTime: (value) => formatRelativeTime(value),
 };
 
 /**

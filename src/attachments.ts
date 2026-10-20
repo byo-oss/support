@@ -27,7 +27,9 @@ export type CustomerAttachment = Omit<TicketAttachment, "internal">;
 export type InboundPartDropReason =
   | "no_storage"
   | "too_large"
-  | "type_not_allowed";
+  | "type_not_allowed"
+  /** `storage.put` threw; the row was removed again. */
+  | "storage_failed";
 
 /**
  * Checks `attachmentIds` before the message is inserted. Empty or undefined:
