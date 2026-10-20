@@ -1,0 +1,10 @@
+node_modules
+dist
+*.log
+*.tgz
+.tarballs/
+*.db
+.DS_Store
+.claude
+examples/**/*.db
+examples/**/.e2e
