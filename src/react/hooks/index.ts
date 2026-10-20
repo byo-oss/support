@@ -88,7 +88,8 @@ export type SupportFetchClient = {
       update(
         input: TicketUpdateInput & { ids: string[] },
       ): Result<UpdateTicketsResponse>;
-      merge(input: {
+      /** Optional: absent when merging is cut (`features.merge` false). */
+      merge?(input: {
         sourceId: string;
         targetId: string;
       }): Result<AgentTicketResponse>;
@@ -108,13 +109,20 @@ export type SupportFetchClient = {
     };
   };
   /** Used for raw-body uploads (`/support/upload`, `/support/agent/upload`). */
+  /**
+   * Raw requests the typed methods can't make: uploads (POST with a `Blob`
+   * body and the file's `content-type`) and attachment downloads (GET; the
+   * response body arrives as a `Blob` because files are served as images,
+   * PDF or `application/octet-stream`). Goes through the auth client, so
+   * credentials and `baseURL` apply across origins.
+   */
   $fetch: (
     path: string,
     options: {
-      method: "POST";
-      query: Record<string, string>;
-      body: Blob;
-      headers: Record<string, string>;
+      method: "GET" | "POST";
+      query?: Record<string, string>;
+      body?: Blob;
+      headers?: Record<string, string>;
     },
   ) => Promise<{ data: unknown; error: unknown }>;
 };
@@ -148,10 +156,12 @@ export type WireUploadedAttachment =
   | Wire<CustomerAttachmentResponse["attachment"]>
   | Wire<AgentAttachmentResponse["attachment"]>;
 
-type Polling = {
+export type SupportPollingOptions = {
   /** Poll interval in ms, paused while the tab is hidden. 0 disables polling. @default 15000 */
   pollInterval?: number;
 };
+
+type Polling = SupportPollingOptions;
 
 type AsyncState = {
   isLoading: boolean;
@@ -213,9 +223,20 @@ export type UseSupportTicketResult = AsyncState & {
     rating?: "good" | "bad";
   }) => Promise<boolean>;
   markSeen: () => Promise<void>;
+  /**
+   * Downloads one of this ticket's attachments through
+   * `GET /support/attachment?id=` (`client.$fetch`). Resolves the file as a
+   * `Blob` (show it with `URL.createObjectURL`, revoke when done), or null on
+   * error (see `error`).
+   */
+  openAttachment: (id: string) => Promise<Blob | null>;
 };
 
-/** One ticket as the customer sees it. `ticketId` null: idle. */
+/**
+ * One ticket as the customer sees it. `ticketId` null: idle. The server
+ * follows merges, so `ticket.id` can differ from `ticketId`; actions then use
+ * `ticket.id`.
+ */
 export function useSupportTicket(
   _client: SupportFetchClient,
   _ticketId: string | null,
@@ -231,6 +252,7 @@ export function useSupportTicket(
     reply: async () => false,
     update: async () => false,
     markSeen: async () => {},
+    openAttachment: async () => null,
   };
 }
 
@@ -254,7 +276,8 @@ export type UseSupportQueueResult = AsyncState & {
   loadMore: () => Promise<void>;
   /** Bulk update; resolves the number updated, or null on error. */
   update: (ids: string[], input: TicketUpdateInput) => Promise<number | null>;
-  merge: (
+  /** Absent when merging is cut; check `features.merge` too. */
+  merge?: (
     sourceId: string,
     targetId: string,
   ) => Promise<WireAgentTicket | null>;
@@ -295,9 +318,18 @@ export type UseSupportAgentTicketResult = AsyncState & {
   }) => Promise<boolean>;
   update: (input: TicketUpdateInput) => Promise<boolean>;
   markSeen: () => Promise<void>;
+  /**
+   * Downloads an attachment through `GET /support/agent/attachment?id=`
+   * (`client.$fetch`). Resolves a `Blob`, or null on error (see `error`).
+   */
+  openAttachment: (id: string) => Promise<Blob | null>;
 };
 
-/** One ticket as an agent sees it. `ticketId` null: idle. */
+/**
+ * One ticket as an agent sees it. `ticketId` null: idle. The server follows
+ * merges, so `ticket.id` can differ from `ticketId`; actions then use
+ * `ticket.id`.
+ */
 export function useSupportAgentTicket(
   _client: SupportFetchClient,
   _ticketId: string | null,
@@ -313,6 +345,7 @@ export function useSupportAgentTicket(
     reply: async () => false,
     update: async () => false,
     markSeen: async () => {},
+    openAttachment: async () => null,
   };
 }
 

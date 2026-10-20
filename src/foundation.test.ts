@@ -38,8 +38,10 @@ import {
   insertTicket,
   removeMember,
   STAFF_ORG_ID,
+  STAFF_ORG_UUID,
   seedSupportWorld,
   signUpUser,
+  staffOrgIdFor,
   takeStrictViolations,
   testRoles,
 } from "./test-utils";
@@ -356,6 +358,11 @@ describe("plugin shape", () => {
         "ATTACHMENT_TYPE_NOT_ALLOWED",
         "ATTACHMENT_NOT_USABLE",
         "NOT_AN_AGENT",
+        "INVALID_STATUS_TRANSITION",
+        "INVALID_CURSOR",
+        "INVALID_TAG",
+        "CANNED_REPLY_NOT_FOUND",
+        "ATTACHMENT_NOT_FOUND",
       ].sort(),
     );
     expect(supportStatements).toEqual({
@@ -652,8 +659,11 @@ describe("test harness", () => {
     expect(session?.user.id).toBe(world.outsider.user.id);
   });
 
-  it("marks a fresh session as impersonated", async () => {
-    const auth = createTestAuth();
+  it("marks a fresh session as impersonated, even with session options overridden", async () => {
+    const auth = createTestAuth(
+      {},
+      { authOptions: { session: { expiresIn: 3600 } } },
+    );
     const user = await signUpUser(auth, "imp@acme.test");
     const normal = await auth.api.getSession({ headers: user.headers });
     const impersonated = await auth.api.getSession({
@@ -665,6 +675,17 @@ describe("test harness", () => {
     expect(by(normal)).toBeNull();
     expect(by(impersonated)).toBe("admin-user");
     expect(impersonated?.user.id).toBe(user.user.id);
+  });
+});
+
+describe("staff org ids", () => {
+  it("picks an id per id mode and refuses serial", () => {
+    expect(staffOrgIdFor()).toBe(STAFF_ORG_ID);
+    expect(staffOrgIdFor("uuid")).toBe(STAFF_ORG_UUID);
+    expect(STAFF_ORG_UUID).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(() => staffOrgIdFor("serial")).toThrow(/serial/);
   });
 });
 

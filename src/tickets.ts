@@ -39,10 +39,13 @@ export type CreateTicketInput = {
 /**
  * Creates a ticket (`status: "open"`, a number from `allocateTicketNumber`
  * on the base adapter, a fresh `createReplyToken()`, `lastMessageAt` = now)
- * and its first message (`kind: "reply"`, `authorType: "customer"`, same
- * channel and `verified`). Retries the insert with a new number on a
- * `number` unique conflict, at most 3 times. Never inside a transaction.
- * Trusts its caller for membership. Emits `support.ticket.created`.
+ * and then its first message (`kind: "reply"`, `authorType: "customer"`, same
+ * channel, `verified` and `emailMessageId`). Retries the ticket insert with a
+ * new number on a `number` unique conflict, at most 3 times. If the message
+ * insert throws (e.g. a duplicate `emailMessageId`), deletes the ticket row
+ * and rethrows the original error; the skipped number is acceptable. Emits
+ * `support.ticket.created` only after both inserts succeeded. Never inside a
+ * transaction. Trusts its caller for membership and visibility.
  */
 export async function createTicket(
   _rt: SupportRuntime,
@@ -67,19 +70,28 @@ export type AddMessageInput = {
   channel: TicketChannel;
   verified: boolean;
   emailMessageId?: string | null;
-  /** Agent reply: the status to set instead of the default `pending`. */
+  /**
+   * Agent reply or note: the status to set. Replies default to `pending`;
+   * notes keep the status when omitted. Callers never call `applyStatus`
+   * around `addMessage`.
+   */
   status?: TicketStatus;
   actorId: string | null;
 };
 
 /**
  * Appends a message and applies what it implies:
- * - `reply`/`note` on a `closed` ticket: 400 `TICKET_CLOSED`.
+ * - `reply`/`note` on a `closed` ticket: 400 `TICKET_CLOSED` (nothing written).
+ * - The message is inserted FIRST, before any ticket update, status change or
+ *   event, so a failed insert (duplicate `emailMessageId`) changes nothing.
  * - A `reply` bumps `lastMessageAt` and `updatedAt` (notes and events don't,
- *   so customers never see activity they can't read). A reply by the
- *   requester sets `requesterSeenAt`; an agent's sets `agentSeenAt`.
- * - Customer reply on `pending` or `solved` → `open`; agent reply → `status`
- *   or `pending` (both through `applyStatus`).
+ *   so customers never see activity they can't read).
+ * - Only a `channel: "web"` reply whose `userId === ticket.userId` sets
+ *   `requesterSeenAt`; email replies never do (the sweep must still mail an
+ *   unseen agent reply). An agent reply or note sets `agentSeenAt`.
+ * - Customer reply on `pending` or `solved` → `open`. Agent reply →
+ *   `input.status ?? "pending"`. Agent note → `input.status` when given.
+ *   All through `applyStatus`; event rows never transition.
  * - Events: `support.customer.replied`, `support.agent.replied`,
  *   `support.note.added`, plus one `support.agent.mentioned` per mention.
  * Returns the message and the ticket as it is after the write.
@@ -117,7 +129,7 @@ export async function markSeen(
 ): Promise<void> {}
 
 /**
- * Trims, lowercases and dedupes tags. Throws 400 `BAD_REQUEST` for a tag that
+ * Trims, lowercases and dedupes tags. Throws 400 `INVALID_TAG` for a tag that
  * is empty, longer than 50 characters or outside `[a-z0-9_-]`.
  */
 export function normalizeTags(tags: readonly string[]): string[] {

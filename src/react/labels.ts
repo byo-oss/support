@@ -1,4 +1,6 @@
 // BYO_STUB: final owner N12a. The seeded keys are final; N12a may add keys (never rename or remove).
+// Shared by both components. Keys only the widget or only the inbox uses go in
+// widget/labels.ts (N12b) or inbox/labels.ts (N12c).
 
 /** Every user-facing string in `SupportWidget` and `SupportInbox`. Override any with `labels`. */
 export type SupportLabels = {
@@ -56,3 +58,12 @@ export const defaultLabels: SupportLabels = {
     count === 1 ? "1 unread ticket" : `${count} unread tickets`,
   ticketNumber: (number) => `#${number}`,
 };
+
+/**
+ * A short relative time ("just now", "5m ago", "3h ago", "2d ago", then the
+ * locale date). Shared non-visual helper for both components.
+ */
+export function formatRelativeTime(value: Date | string): string {
+  const date = typeof value === "string" ? new Date(value) : value;
+  return date.toLocaleString();
+}

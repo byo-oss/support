@@ -14,7 +14,7 @@ import { Kysely } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { type SupportOptions, support } from "./index";
 import {
-  baseAuthOptions,
+  mergeAuthOptions,
   type TestAuthConfig,
   testOrganization,
   wrapAdapterFactory,
@@ -57,8 +57,7 @@ export async function createSqlTestAuth(
       : {}),
   };
   const options = {
-    ...baseAuthOptions,
-    ...config.authOptions,
+    ...mergeAuthOptions(config.authOptions),
     advanced,
     plugins,
   };

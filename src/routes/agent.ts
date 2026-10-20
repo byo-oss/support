@@ -6,7 +6,8 @@ import type { ResolvedSupportOptions } from "../options";
  * `getSupportTicketAsAgent`, `replyAsSupportAgent`, `updateSupportTickets`,
  * `markSupportTicketSeenAsAgent`, `listSupportTags`, plus the canned-reply
  * endpoints from `cannedEndpoints` in `../canned`. Leave the return type
- * inferred so `$InferServerPlugin` sees every endpoint.
+ * inferred so `$InferServerPlugin` sees every endpoint. Every endpoint that takes a ticket id resolves
+ * it with `resolveMergedTicket` first and works on the resolved ticket's id.
  */
 export function agentEndpoints(_opts: ResolvedSupportOptions) {
   return {};

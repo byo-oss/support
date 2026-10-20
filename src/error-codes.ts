@@ -22,6 +22,13 @@ export const SUPPORT_ERROR_CODES = defineErrorCodes({
   ATTACHMENT_TYPE_NOT_ALLOWED: "This file type is not allowed",
   ATTACHMENT_NOT_USABLE: "One or more attachments can't be used here",
   NOT_AN_AGENT: "That user is not a support agent",
+  // added by N04 for codes the module contracts name
+  INVALID_STATUS_TRANSITION: "This status change is not allowed",
+  INVALID_CURSOR: "Invalid cursor",
+  INVALID_TAG:
+    "Tags are 1 to 50 characters of lowercase letters, digits, - and _",
+  CANNED_REPLY_NOT_FOUND: "Canned reply not found",
+  ATTACHMENT_NOT_FOUND: "Attachment not found",
 });
 
 export type SupportErrorCode = keyof typeof SUPPORT_ERROR_CODES;

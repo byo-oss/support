@@ -1,6 +1,7 @@
 // BYO_STUB: final owner N05. Signatures are final (contracts.md); bodies are neutral.
 import { APIError } from "better-auth/api";
 import type { SupportRuntime } from "./adapter";
+import { SUPPORT_ERROR_CODES } from "./error-codes";
 import type { SupportTicketRow, TicketStatus } from "./schema";
 
 /** Filters of `listMySupportTickets`. */
@@ -48,9 +49,9 @@ export function encodeCursor(cursor: ListCursor): string {
   return btoa(JSON.stringify({ at: cursor.at.toISOString(), ids: cursor.ids }));
 }
 
-/** Parses a cursor. Malformed, or more than 200 ids: 400 `BAD_REQUEST`. */
+/** Parses a cursor. Malformed, or more than 200 ids: 400 `INVALID_CURSOR`. */
 export function decodeCursor(_value: string): ListCursor {
-  throw APIError.fromStatus("BAD_REQUEST", { message: "Invalid cursor" });
+  throw APIError.from("BAD_REQUEST", SUPPORT_ERROR_CODES.INVALID_CURSOR);
 }
 
 /**

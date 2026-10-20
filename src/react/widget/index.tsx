@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import type { SupportFetchClient, WireCustomerMessage } from "../hooks";
 import type { SupportLabels } from "../labels";
+import type { SupportWidgetLabels } from "./labels";
 
 export type SupportWidgetProps = {
   client: SupportFetchClient;
@@ -16,7 +17,8 @@ export type SupportWidgetProps = {
   organizationId?: string;
   /** Poll interval in ms. @default 15000 */
   pollInterval?: number;
-  labels?: Partial<SupportLabels>;
+  /** Shared keys (`SupportLabels`) plus this component's own. */
+  labels?: Partial<SupportLabels & SupportWidgetLabels>;
   className?: string;
   listClassName?: string;
   threadClassName?: string;

@@ -2,6 +2,7 @@
 import type { ReactNode } from "react";
 import type { SupportFetchClient, WireAgentMessage } from "../hooks";
 import type { SupportLabels } from "../labels";
+import type { SupportInboxLabels } from "./labels";
 
 /** A staff member for the assignee and @mention pickers (the plugin doesn't enumerate staff). */
 export type SupportAgent = { id: string; name: string; image?: string | null };
@@ -15,7 +16,8 @@ export type SupportInboxProps = {
   renderMessage?: (message: WireAgentMessage, fallback: ReactNode) => ReactNode;
   /** Poll interval in ms. @default 15000 */
   pollInterval?: number;
-  labels?: Partial<SupportLabels>;
+  /** Shared keys (`SupportLabels`) plus this component's own. */
+  labels?: Partial<SupportLabels & SupportInboxLabels>;
   className?: string;
   queueClassName?: string;
   threadClassName?: string;

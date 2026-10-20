@@ -1,5 +1,6 @@
 export {
   type SupportFetchClient,
+  type SupportPollingOptions,
   type TicketUpdateInput,
   type UseSupportAgentTicketResult,
   type UseSupportCannedRepliesResult,
@@ -30,5 +31,11 @@ export {
   SupportInbox,
   type SupportInboxProps,
 } from "./inbox";
-export { defaultLabels, type SupportLabels } from "./labels";
+export { defaultInboxLabels, type SupportInboxLabels } from "./inbox/labels";
+export {
+  defaultLabels,
+  formatRelativeTime,
+  type SupportLabels,
+} from "./labels";
 export { SupportWidget, type SupportWidgetProps } from "./widget";
+export { defaultWidgetLabels, type SupportWidgetLabels } from "./widget/labels";

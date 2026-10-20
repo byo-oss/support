@@ -33,8 +33,10 @@ export type InboundPartDropReason =
  * Checks `attachmentIds` before the message is inserted. Empty or undefined:
  * `[]` (no query). Ids given but no `attachments` option: 400
  * `STORAGE_NOT_CONFIGURED`. Otherwise every id must exist, belong to
- * `ticketId`, be uploaded by `uploaderId`, be unattached (`messageId` null),
- * and suit `kind` (an `internal` upload only on a `note`); any failure: 400
+ * `ticketId` (the resolved ticket, after `resolveMergedTicket`), be uploaded
+ * by `uploaderId`, be unattached (`messageId` null), and match the audience
+ * exactly: `attachment.internal === (kind === "note")` (internal uploads only
+ * on notes, public uploads only on replies). Any failure: 400
  * `ATTACHMENT_NOT_USABLE`. Returns the rows to bind.
  */
 export async function validateAttachments(
@@ -64,9 +66,11 @@ export async function bindAttachments(
 ): Promise<void> {}
 
 /**
- * A ticket's attached files (`messageId` set), oldest first. Customers get
- * no `internal` ones and no `internal` field. Without `attachments`: `[]`
- * (the table doesn't exist).
+ * A ticket's attached files (`messageId` set), oldest first. Agents get all
+ * of them. Customers get only rows with `internal: false` whose bound message
+ * has `kind: "reply"` (a second guard: nothing bound to a note or event ever
+ * reaches a customer), without the `internal` field. Without `attachments`:
+ * `[]` (the table doesn't exist).
  */
 export async function listTicketAttachments(
   rt: SupportRuntime,
@@ -102,7 +106,8 @@ export async function pruneUploads(
  * type and size limits as uploads (`internal: false`, `userId` the sender's
  * account or null). Never throws for a part it refuses: returns why, and the
  * caller (`receiveEmail`) writes the `attachment_dropped` event. Without
- * `attachments`: `{ dropped: true, reason: "no_storage" }`.
+ * `attachments`: `{ dropped: true, reason: "no_storage" }`. Row and blob
+ * are written in the order `routes/attachments.ts` documents (id first).
  */
 export async function storeInboundPart(
   _rt: SupportRuntime,

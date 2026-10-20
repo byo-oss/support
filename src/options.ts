@@ -271,6 +271,32 @@ export const DEFAULT_ALLOWED_TYPES = [
   "application/zip",
 ] as const;
 
+/**
+ * Input and paging limits shared by the endpoint, service and UI modules
+ * (contracts.md §4), so every module uses the same numbers.
+ */
+export const SUPPORT_LIMITS = {
+  subject: 200,
+  body: 50_000,
+  cannedTitle: 200,
+  cannedBody: 50_000,
+  /** `ids` on bulk update and delete. */
+  ids: 100,
+  attachmentIds: 10,
+  mentions: 20,
+  q: 200,
+  cursor: 4000,
+  /** Ids carried in a list cursor. */
+  cursorIds: 200,
+  tagLength: 50,
+  /** Tag rows `listSupportTags` reads at most. */
+  tagsListed: 10_000,
+  filename: 200,
+  /** `mergedIntoId` hops `resolveMergedTicket` follows. */
+  mergeHops: 10,
+  cannedListed: 200,
+} as const;
+
 /** Types a browser would render as a page; refused at boot even if listed. */
 export const FORBIDDEN_TYPES = [
   "text/html",

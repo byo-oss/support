@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { allocateTicketNumber } from "./counter";
 import { createSqlTestAuth } from "./test-sql";
-import { getContext, insertTicket } from "./test-utils";
+import {
+  getContext,
+  insertTicket,
+  seedSupportWorld,
+  staffOrgIdFor,
+} from "./test-utils";
 
 type Harness = Awaited<ReturnType<typeof createSqlTestAuth>>;
 let harness: Harness | undefined;
@@ -99,5 +104,27 @@ describe.each([
     harness = await createSqlTestAuth({}, { generateId });
     await insertTicket(harness.auth, { number: 1 });
     await expect(insertTicket(harness.auth, { number: 1 })).rejects.toThrow();
+  });
+});
+
+// The harness itself on the SQL lane: the world seeder must work in both id modes.
+describe.each([
+  { ids: "default ids", generateId: undefined },
+  { ids: "uuid ids", generateId: "uuid" as const },
+])("seedSupportWorld on PGlite ($ids)", ({ generateId }) => {
+  it("creates the staff org with an id the database accepts", async () => {
+    const staffOrganizationId = staffOrgIdFor(generateId);
+    harness = await createSqlTestAuth({ staffOrganizationId }, { generateId });
+    const world = await seedSupportWorld(harness.auth);
+    expect(world.staffOrganizationId).toBe(staffOrganizationId);
+    const staff = await harness.db
+      .selectFrom("member")
+      .select(["userId", "role"])
+      .where("organizationId", "=", staffOrganizationId)
+      .execute();
+    expect(
+      staff.find((m) => m.userId === world.agents.owner.user.id)?.role,
+    ).toBe("owner");
+    expect(staff.length).toBe(Object.keys(world.agents).length);
   });
 });

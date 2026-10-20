@@ -233,6 +233,47 @@ export const testOrganization = () =>
 /** Id of the staff organization `seedSupportWorld` creates. Pass it as `staffOrganizationId`. */
 export const STAFF_ORG_ID = "org_staff";
 
+/** The staff organization id for `advanced.database.generateId: "uuid"` (a valid UUID). */
+export const STAFF_ORG_UUID = "00000000-0000-4000-8000-00000000057a";
+
+/**
+ * The staff org id to pass as `staffOrganizationId` for a given id mode:
+ * `STAFF_ORG_UUID` for `"uuid"`, `STAFF_ORG_ID` otherwise. Serial ids are not
+ * supported by the world seeder (the org id must be known before the auth).
+ */
+export function staffOrgIdFor(generateId?: "uuid" | "serial"): string {
+  if (generateId === "serial") {
+    throw new Error('seedSupportWorld does not support generateId: "serial"');
+  }
+  return generateId === "uuid" ? STAFF_ORG_UUID : STAFF_ORG_ID;
+}
+
+/**
+ * Merges extra better-auth options over the base, keeping the base
+ * `session.additionalFields.impersonatedBy` and `emailAndPassword.password`
+ * when the extra options set `session` or `emailAndPassword` too.
+ */
+export function mergeAuthOptions<O extends Partial<BetterAuthOptions>>(
+  extra: O | undefined,
+) {
+  return {
+    ...baseAuthOptions,
+    ...extra,
+    emailAndPassword: {
+      ...baseAuthOptions.emailAndPassword,
+      ...extra?.emailAndPassword,
+    },
+    session: {
+      ...baseAuthOptions.session,
+      ...extra?.session,
+      additionalFields: {
+        ...baseAuthOptions.session.additionalFields,
+        ...extra?.session?.additionalFields,
+      },
+    },
+  };
+}
+
 export const TEST_PASSWORD = "password-1234";
 
 /** better-auth options shared by both lanes. Passwords are not hashed, to keep tests fast. */
@@ -287,7 +328,7 @@ export function createTestAuth(
     support(opts),
     ...(config.plugins ?? []),
   ];
-  const options = { ...baseAuthOptions, ...config.authOptions, plugins };
+  const options = { ...mergeAuthOptions(config.authOptions), plugins };
   const memoryDB = seededMemoryDB(options);
   return betterAuth({
     ...options,
@@ -444,13 +485,20 @@ export async function removeMember(
 /**
  * Creates the staff organization with a fixed id (so it can be passed as
  * `staffOrganizationId` before the org exists) and makes `owner` its owner.
+ * Default id: `staffOrgIdFor(<the auth's generateId>)`.
  */
 export async function createStaffOrganization(
   auth: AnyTestAuth,
   owner: TestUser,
-  id = STAFF_ORG_ID,
+  id?: string,
 ): Promise<{ id: string }> {
   const context = await getContext(auth);
+  id ??= staffOrgIdFor(
+    context.options.advanced?.database?.generateId as
+      | "uuid"
+      | "serial"
+      | undefined,
+  );
   await context.adapter.create({
     model: "organization",
     data: { id, name: "Staff", slug: id, createdAt: new Date() },
@@ -479,14 +527,22 @@ export type SupportTestWorld = {
 };
 
 /**
- * Seeds the people most tests need: a staff org (`STAFF_ORG_ID`) with one
- * staff member per test role, a customer org with an owner and a teammate,
- * and an outsider. Create the auth with `staffOrganizationId: STAFF_ORG_ID`.
+ * Seeds the people most tests need: a staff org with one staff member per
+ * test role, a customer org with an owner and a teammate, and an outsider.
+ * Create the auth with `staffOrganizationId: staffOrgIdFor(generateId)`
+ * (`STAFF_ORG_ID` on the memory lane, `STAFF_ORG_UUID` with uuid ids); the
+ * default here follows the auth's own `generateId`. Serial ids: unsupported.
  */
 export async function seedSupportWorld(
   auth: AnyTestAuth,
-  staffOrganizationId = STAFF_ORG_ID,
+  staffOrganizationId?: string,
 ): Promise<SupportTestWorld> {
+  staffOrganizationId ??= staffOrgIdFor(
+    (await getContext(auth)).options.advanced?.database?.generateId as
+      | "uuid"
+      | "serial"
+      | undefined,
+  );
   const roles = Object.keys(testRoles) as TestRole[];
   const agents = {} as Record<TestRole, TestUser>;
   for (const role of roles) {
