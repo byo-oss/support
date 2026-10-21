@@ -1728,6 +1728,90 @@ describe("SupportWidget polling", () => {
   });
 });
 
+/** A text input or textarea: what `fieldClassName` styles. */
+function isField(el: Element): boolean {
+  if (el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)
+    return true;
+  return (
+    el instanceof HTMLInputElement &&
+    !["checkbox", "radio", "file", "hidden"].includes(el.type)
+  );
+}
+
+function describeControl(el: Element): string {
+  const name =
+    el.getAttribute("aria-label") ??
+    el.getAttribute("placeholder") ??
+    el.textContent?.trim().slice(0, 30);
+  return `${el.tagName.toLowerCase()}[${el.getAttribute("type") ?? ""}] ${name}`;
+}
+
+/**
+ * Why a control's hit area is under 44px on a coarse pointer, or null. A
+ * checkbox or the (visually hidden) file input counts through its label.
+ */
+function touchProblem(el: HTMLElement): string | null {
+  const viaLabel =
+    el instanceof HTMLInputElement &&
+    (el.type === "checkbox" || el.type === "radio" || el.type === "file");
+  const target = viaLabel ? el.closest("label") : el;
+  if (!target) return "no label";
+  if (!target.className.split(/\s+/).includes("pointer-coarse:min-h-11"))
+    return "height";
+  return null;
+}
+
+/** A solved, shared ticket with an attachment, and more tickets to load. */
+function widgetEverything(): Setup {
+  const shared = ticket("t1", {
+    organizationId: "org1",
+    visibility: "organization",
+    status: "solved",
+  });
+  return {
+    tickets: [shared, ticket("t2")],
+    nextCursor: "c",
+    detail: {
+      ticket: shared,
+      messages: [message("m1")],
+      attachments: [attachment("a1")],
+    },
+  };
+}
+
+/**
+ * Walks the popover through the list, the new-ticket form and a thread with
+ * an upload, calling `scan` at each step. Returns a counter of the fields
+ * seen across the steps.
+ */
+async function openEveryWidgetPart(scan: () => void) {
+  let fields = 0;
+  const step = () => {
+    fields += Array.from(
+      document.querySelectorAll("input, select, textarea"),
+    ).filter(isField).length;
+    scan();
+  };
+  step();
+  await openPanel();
+  await screen.findByText(/Subject t1/);
+  step();
+  fireEvent.click(screen.getByRole("button", { name: "New ticket" }));
+  await screen.findByLabelText("Subject");
+  step();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+  await screen.findByText("Body m1");
+  const file = document.querySelector<HTMLInputElement>("input[type=file]");
+  if (!file) throw new Error("no file input");
+  fireEvent.change(file, {
+    target: { files: [new File(["a"], "photo.png", { type: "image/png" })] },
+  });
+  await screen.findByText("Remove photo.png");
+  step();
+  return () => fields;
+}
+
 describe("SupportWidget classes and layout", () => {
   it("applies className and the per-part class props", async () => {
     const { container } = renderWidget(
@@ -1744,6 +1828,7 @@ describe("SupportWidget classes and layout", () => {
         messageClassName: "message-x",
         composerClassName: "composer-x",
         buttonClassName: "button-x",
+        fieldClassName: "field-x",
       },
     );
     expect(container.firstElementChild?.className).toContain("root-x");
@@ -1756,6 +1841,7 @@ describe("SupportWidget classes and layout", () => {
     expect(document.querySelector(".list-x")?.className).toContain("flex");
     fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
     expect(document.querySelector(".composer-x")).not.toBeNull();
+    expect(screen.getByLabelText("Subject").className).toContain("field-x");
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
@@ -1765,6 +1851,55 @@ describe("SupportWidget classes and layout", () => {
       "rounded",
     );
     expect(document.querySelector(".composer-x")).not.toBeNull();
+  });
+
+  it("fieldClassName reaches every text input and textarea, and nothing else", async () => {
+    const { container } = renderWidget(widgetEverything(), {
+      organizationId: "org1",
+      fieldClassName: "field-x",
+    });
+    const missing = new Set<string>();
+    const stray = new Set<string>();
+    const scan = () => {
+      for (const el of container.querySelectorAll<HTMLElement>("*")) {
+        const has = el.classList.contains("field-x");
+        if (isField(el) && !has) missing.add(describeControl(el));
+        if (!isField(el) && has) stray.add(describeControl(el));
+      }
+    };
+    const fields = await openEveryWidgetPart(scan);
+    expect([...missing]).toEqual([]);
+    expect([...stray]).toEqual([]);
+    expect(fields()).toBeGreaterThanOrEqual(3);
+  });
+
+  it("gives every control a 44px target on a coarse pointer", async () => {
+    const { container } = renderWidget(widgetEverything(), {
+      organizationId: "org1",
+    });
+    const small = new Set<string>();
+    let seen = 0;
+    const scan = () => {
+      for (const el of container.querySelectorAll<HTMLElement>(
+        "button, input, select, textarea",
+      )) {
+        seen += 1;
+        const problem = touchProblem(el);
+        if (problem) small.add(`${describeControl(el)}: ${problem}`);
+      }
+    };
+    await openEveryWidgetPart(scan);
+    expect([...small]).toEqual([]);
+    // the scan reached the rating, the share toggle and both attachment buttons
+    for (const name of [
+      "Good",
+      "Share with my organization",
+      "Download report.pdf",
+      "Remove photo.png",
+    ]) {
+      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    }
+    expect(seen).toBeGreaterThan(10);
   });
 
   it("appends className to the inline panel's own classes", () => {

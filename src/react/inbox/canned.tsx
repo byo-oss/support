@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, WireCannedReply } from "../hooks";
 import { useSupportCannedReplies } from "../hooks";
 import {
   Button,
   buttonClass,
   cx,
-  FIELD_CLASS,
+  fieldClass,
   isForbidden,
   PICKER_PANEL,
   Popover,
@@ -17,6 +18,7 @@ type CannedPickerProps = {
   labels: InboxLabels;
   onInsert: (text: string) => void;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 /**
@@ -29,6 +31,7 @@ export function CannedPicker({
   labels,
   onInsert,
   buttonClassName,
+  fieldClassName,
 }: CannedPickerProps) {
   const canned = useSupportCannedReplies(client);
   const [hidden, setHidden] = useState(false);
@@ -62,6 +65,7 @@ export function CannedPicker({
           labels={labels}
           canManage={canManage}
           buttonClassName={buttonClassName}
+          fieldClassName={fieldClassName}
           onInsert={(text) => {
             onInsert(text);
             close();
@@ -85,6 +89,7 @@ function CannedPanel({
   labels,
   canManage,
   buttonClassName,
+  fieldClassName,
   onInsert,
   onSave,
   onRemove,
@@ -93,6 +98,7 @@ function CannedPanel({
   labels: InboxLabels;
   canManage: boolean;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
   onInsert: (text: string) => void;
   onSave: (input: {
     id?: string;
@@ -131,7 +137,7 @@ function CannedPanel({
         onChange={(event) => setFilter(event.target.value)}
         aria-label={labels.cannedSearch}
         placeholder={labels.cannedSearch}
-        className={cx(FIELD_CLASS, "w-full")}
+        className={fieldClass(fieldClassName, "w-full")}
       />
       {shown.length === 0 ? (
         <p className="px-1 py-2 text-sm text-muted-foreground">
@@ -153,7 +159,10 @@ function CannedPanel({
                     onInsert(reply.body);
                   }
                 }}
-                className="min-w-0 flex-1 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cx(
+                  "min-w-0 flex-1 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  TOUCH_TARGET,
+                )}
               >
                 <span className="block truncate font-medium">
                   {reply.title}
@@ -171,7 +180,10 @@ function CannedPanel({
                     if (editId === reply.id) resetForm();
                     void onRemove(reply.id);
                   }}
-                  className="rounded px-2 py-1.5 text-sm text-destructive hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cx(
+                    "rounded px-2 py-1.5 text-sm text-destructive hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    TOUCH_ICON,
+                  )}
                 >
                   <span aria-hidden>×</span>
                 </button>
@@ -200,7 +212,7 @@ function CannedPanel({
             onChange={(event) => setTitle(event.target.value)}
             aria-label={labels.cannedTitle}
             placeholder={labels.cannedTitle}
-            className={cx(FIELD_CLASS, "w-full")}
+            className={fieldClass(fieldClassName, "w-full")}
           />
           <textarea
             value={body}
@@ -208,7 +220,7 @@ function CannedPanel({
             aria-label={labels.cannedBody}
             placeholder={labels.cannedBody}
             rows={3}
-            className={cx(FIELD_CLASS, "w-full")}
+            className={fieldClass(fieldClassName, "w-full")}
           />
           <button
             type="submit"

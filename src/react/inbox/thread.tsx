@@ -1,6 +1,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
+import { TOUCH_TARGET } from "../classes";
 import type {
   SupportFetchClient,
   UseSupportQueueResult,
@@ -50,6 +51,7 @@ type ThreadPaneProps = {
   messageClassName?: string | undefined;
   composerClassName?: string | undefined;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 /** One ticket: header, messages and timeline, composer, side panel. */
@@ -70,6 +72,7 @@ export function ThreadPane({
   messageClassName,
   composerClassName,
   buttonClassName,
+  fieldClassName,
 }: ThreadPaneProps) {
   const thread = useSupportAgentTicket(client, ticketId, {
     ...(pollInterval !== undefined ? { pollInterval } : {}),
@@ -267,7 +270,10 @@ export function ThreadPane({
                     type="button"
                     aria-label={labels.openAttachment(file.filename)}
                     onClick={() => void openAttachment(file)}
-                    className="flex max-w-full items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cx(
+                      "flex max-w-full items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      TOUCH_TARGET,
+                    )}
                   >
                     <span className="truncate">{file.filename}</span>
                     <span className="shrink-0 text-muted-foreground">
@@ -374,6 +380,7 @@ export function ThreadPane({
               labels={labels}
               className={composerClassName}
               buttonClassName={buttonClassName}
+              fieldClassName={fieldClassName}
             />
           </>
         ) : null}
@@ -412,6 +419,7 @@ export function ThreadPane({
             }}
             labels={labels}
             buttonClassName={buttonClassName}
+            fieldClassName={fieldClassName}
           />
         </aside>
       ) : null}

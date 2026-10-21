@@ -3,7 +3,7 @@
 
 /** Strings only `SupportInbox` shows. */
 export type SupportInboxLabels = {
-  /** Heading of the agent queue. */
+  /** Heading and region name of the staff queue. */
   queue: string;
   /** Label and placeholder of the queue search box (ticket number or subject). */
   search: string;
@@ -110,7 +110,7 @@ export type SupportInboxLabels = {
 };
 
 export const defaultInboxLabels: SupportInboxLabels = {
-  queue: "Queue",
+  queue: "Support queue",
   search: "Search by number or subject",
   filterStatus: "Filter by status",
   allStatuses: "All statuses",

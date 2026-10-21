@@ -278,6 +278,81 @@ afterEach(() => {
   for (const restore of restores.splice(0)) restore();
 });
 
+/** A text input, select or textarea: what `fieldClassName` styles. */
+function isField(el: Element): boolean {
+  if (el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)
+    return true;
+  return (
+    el instanceof HTMLInputElement &&
+    !["checkbox", "radio", "file", "hidden"].includes(el.type)
+  );
+}
+
+function describeControl(el: Element): string {
+  const name =
+    el.getAttribute("aria-label") ??
+    el.getAttribute("placeholder") ??
+    el.textContent?.trim().slice(0, 30);
+  return `${el.tagName.toLowerCase()}[${el.getAttribute("type") ?? ""}] ${name}`;
+}
+
+const COARSE_MIN_H = "pointer-coarse:min-h-11";
+const COARSE_MIN_W = "pointer-coarse:min-w-11";
+
+/**
+ * Why a control's hit area is under 44px on a coarse pointer, or null.
+ * A checkbox or radio counts through its label; an icon-only button (×)
+ * needs the width too; the hidden file input is clicked through a button.
+ */
+function touchProblem(el: HTMLElement): string | null {
+  if (el instanceof HTMLInputElement && el.type === "file") return null;
+  const toggle =
+    el instanceof HTMLInputElement &&
+    (el.type === "checkbox" || el.type === "radio");
+  const target = toggle ? el.closest("label") : el;
+  if (!target) return "no label";
+  const classes = target.className.split(/\s+/);
+  if (!classes.includes(COARSE_MIN_H)) return "height";
+  if (el.textContent?.trim() === "×" && !classes.includes(COARSE_MIN_W))
+    return "width";
+  if (toggle && !el.getAttribute("aria-label") && !target.textContent?.trim())
+    return "no name";
+  return null;
+}
+
+/**
+ * Walks an open ticket through the bulk bar, an upload, canned replies in
+ * manage mode, the mention picker and the merge panel, calling `scan` at
+ * each step (popovers stay open: `click` sends no outside mousedown).
+ */
+async function openEveryInboxPart(container: HTMLElement, scan: () => void) {
+  scan();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select ticket #2" }));
+  await screen.findByText("1 selected");
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  scan();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.change(screen.getByTestId("support-inbox-file"), {
+    target: { files: [new File(["a"], "photo.png", { type: "image/png" })] },
+  });
+  await screen.findByText("up1.png");
+  scan();
+  fireEvent.click(screen.getByRole("button", { name: "Canned replies" }));
+  await screen.findByText("Greeting");
+  fireEvent.click(screen.getByRole("button", { name: "Manage" }));
+  await screen.findByRole("textbox", { name: "Title" });
+  scan();
+  fireEvent.click(screen.getByRole("button", { name: "Mention" }));
+  await screen.findByRole("button", { name: "Mention Alice" });
+  scan();
+  fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+  await screen.findByRole("button", { name: /Merge into #2/ });
+  fireEvent.click(screen.getByRole("button", { name: /Merge into #2/ }));
+  await screen.findByRole("button", { name: "Yes, merge" });
+  scan();
+  expect(container.querySelector("[role=log]")).not.toBeNull();
+}
+
 // ---------------------------------------------------------------------------
 
 describe("queue", () => {
@@ -1233,7 +1308,7 @@ describe("keyboard and popovers", () => {
   it("the queue's filters come before its rows in Tab order", async () => {
     renderInbox();
     await screen.findByText("Login broken");
-    const queue = screen.getByRole("region", { name: "Queue" });
+    const queue = screen.getByRole("region", { name: "Support queue" });
     const order = Array.from(
       queue.querySelectorAll<HTMLElement>("input, select, button"),
     ).map((el) => el.getAttribute("aria-label") ?? el.textContent);
@@ -1915,14 +1990,20 @@ describe("class props", () => {
         messageClassName: "message-x",
         composerClassName: "composer-x",
         buttonClassName: "button-x",
+        fieldClassName: "field-x",
       },
     );
     expect((container.firstElementChild as HTMLElement).className).toContain(
       "root-x",
     );
-    expect(screen.getByRole("region", { name: "Queue" }).className).toContain(
-      "queue-x",
-    );
+    expect(textbox().className).toContain("field-x");
+    expect(
+      screen.getByRole("searchbox", { name: "Search by number or subject" })
+        .className,
+    ).toContain("field-x");
+    expect(
+      screen.getByRole("region", { name: "Support queue" }).className,
+    ).toContain("queue-x");
     expect(
       screen.getByRole("region", { name: "Login broken" }).className,
     ).toContain("thread-x");
@@ -1937,6 +2018,57 @@ describe("class props", () => {
     expect(
       screen.getByRole("button", { name: "Load more" }).className,
     ).toContain("button-x");
+  });
+
+  it("fieldClassName reaches every text input, select and textarea, and nothing else", async () => {
+    const { container } = await openTicket(
+      { tickets: [ticket(1, { tags: ["billing"] }), ticket(2), ticket(3)] },
+      { fieldClassName: "field-x" },
+    );
+    const missing = new Set<string>();
+    const stray = new Set<string>();
+    const scan = () => {
+      for (const el of container.querySelectorAll<HTMLElement>("*")) {
+        const has = el.classList.contains("field-x");
+        if (isField(el) && !has) missing.add(describeControl(el));
+        if (!isField(el) && has) stray.add(describeControl(el));
+      }
+    };
+    await openEveryInboxPart(container, scan);
+    expect([...missing]).toEqual([]);
+    expect([...stray]).toEqual([]);
+  });
+
+  it("gives every control a 44px target on a coarse pointer", async () => {
+    const { container } = await openTicket({
+      tickets: [ticket(1, { tags: ["billing"] }), ticket(2), ticket(3)],
+      attachments: [attachment("a1", "m1")],
+      nextCursor: "more",
+    });
+    const small = new Set<string>();
+    let seen = 0;
+    const scan = () => {
+      for (const el of container.querySelectorAll<HTMLElement>(
+        "button, input, select, textarea",
+      )) {
+        seen += 1;
+        const problem = touchProblem(el);
+        if (problem) small.add(`${describeControl(el)}: ${problem}`);
+      }
+    };
+    await openEveryInboxPart(container, scan);
+    expect([...small]).toEqual([]);
+    // the scan reached the bulk bar, the pickers, the upload and the tags
+    for (const name of [
+      "Select ticket #1",
+      "Remove tag billing",
+      "Remove up1.png",
+      "Delete canned reply Greeting",
+      "Mention Alice",
+    ]) {
+      expect(screen.getAllByLabelText(name).length).toBeGreaterThan(0);
+    }
+    expect(seen).toBeGreaterThan(40);
   });
 
   it("keeps popover panels inside a narrow screen", async () => {

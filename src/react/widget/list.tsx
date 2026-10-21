@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { TOUCH_TARGET } from "../classes";
 import type { UseSupportTicketsResult } from "../hooks";
 import {
   buttonBase,
@@ -83,6 +84,7 @@ export function ListView({
                   className={cn(
                     "flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-accent/50",
                     focusRing,
+                    TOUCH_TARGET,
                   )}
                 >
                   <span
@@ -126,6 +128,7 @@ export function ListView({
           className={cn(
             "border-t border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground",
             focusRing,
+            TOUCH_TARGET,
           )}
         >
           {labels.loadMore}
@@ -145,6 +148,7 @@ export type NewTicketViewProps = {
   focusOnMount: boolean;
   className: string | undefined;
   composerClassName: string | undefined;
+  fieldClassName: string | undefined;
 };
 
 export function NewTicketView({
@@ -156,6 +160,7 @@ export function NewTicketView({
   focusOnMount,
   className,
   composerClassName,
+  fieldClassName,
 }: NewTicketViewProps) {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -245,7 +250,7 @@ export function NewTicketView({
           onKeyDown={onSubjectKey}
           maxLength={200}
           required
-          className={fieldBase}
+          className={cn(fieldBase, fieldClassName)}
         />
         <label htmlFor={bodyId} className="text-sm font-medium">
           {labels.message}
@@ -259,10 +264,12 @@ export function NewTicketView({
           rows={5}
           maxLength={50_000}
           required
-          className={cn(fieldBase, "resize-y")}
+          className={cn(fieldBase, "resize-y", fieldClassName)}
         />
         {organizationId ? (
-          <label className="flex items-center gap-2 text-sm">
+          <label
+            className={cn("flex items-center gap-2 text-sm", TOUCH_TARGET)}
+          >
             <input
               type="checkbox"
               checked={share}

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
+import { TOUCH_ICON } from "../classes";
 import type {
   SupportFetchClient,
   UseSupportAgentTicketResult,
   WireAgentTicket,
 } from "../hooks";
 import { MergeControl } from "./merge";
-import { Button, buttonClass, Confirm, cx, FIELD_CLASS } from "./primitives";
+import { Button, buttonClass, Confirm, cx, fieldClass } from "./primitives";
 import { PRIORITIES, STATUSES } from "./queue";
 import type { InboxLabels, SupportAgent } from "./types";
 
@@ -24,6 +25,7 @@ type DetailsPanelProps = {
   labels: InboxLabels;
   className?: string | undefined;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 const NONE = "";
@@ -41,6 +43,7 @@ export function DetailsPanel({
   labels,
   className,
   buttonClassName,
+  fieldClassName,
 }: DetailsPanelProps) {
   const [tagDraft, setTagDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -60,7 +63,7 @@ export function DetailsPanel({
           onChange={(event) =>
             void update({ status: event.target.value as TicketStatus })
           }
-          className={FIELD_CLASS}
+          className={fieldClass(fieldClassName)}
         >
           {STATUSES.map((status) => (
             <option key={status} value={status}>
@@ -80,7 +83,7 @@ export function DetailsPanel({
               priority: (event.target.value || null) as TicketPriority | null,
             })
           }
-          className={FIELD_CLASS}
+          className={fieldClass(fieldClassName)}
         >
           <option value={NONE}>{labels.noPriority}</option>
           {PRIORITIES.map((priority) => (
@@ -99,7 +102,7 @@ export function DetailsPanel({
           onChange={(event) =>
             void update({ assigneeId: event.target.value || null })
           }
-          className={FIELD_CLASS}
+          className={fieldClass(fieldClassName)}
         >
           <option value={NONE}>{labels.unassigned}</option>
           {assigneeKnown ? null : (
@@ -133,7 +136,10 @@ export function DetailsPanel({
                   type="button"
                   aria-label={labels.removeTagNamed(tag)}
                   onClick={() => void update({ removeTags: [tag] })}
-                  className="rounded px-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={cx(
+                    "rounded px-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    TOUCH_ICON,
+                  )}
                 >
                   <span aria-hidden>×</span>
                 </button>
@@ -158,7 +164,7 @@ export function DetailsPanel({
             onChange={(event) => setTagDraft(event.target.value)}
             aria-label={labels.tagPlaceholder}
             placeholder={labels.tagPlaceholder}
-            className={cx(FIELD_CLASS, "flex-1")}
+            className={fieldClass(fieldClassName, "flex-1")}
           />
           <datalist id="support-inbox-ticket-tags">
             {tags
@@ -184,6 +190,7 @@ export function DetailsPanel({
             source={ticket}
             labels={labels}
             buttonClassName={buttonClassName}
+            fieldClassName={fieldClassName}
             onMerge={onMerge}
           />
         ) : null}

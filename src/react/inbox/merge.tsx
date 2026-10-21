@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
+import { TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, WireAgentTicket } from "../hooks";
 import { useSupportQueue } from "../hooks";
-import { Button, Confirm, cx, FIELD_CLASS, Popover } from "./primitives";
+import { Button, Confirm, cx, fieldClass, Popover } from "./primitives";
 import type { InboxLabels } from "./types";
 
 type MergeControlProps = {
@@ -12,6 +13,7 @@ type MergeControlProps = {
   /** True when the merge went through. */
   onMerge: (target: WireAgentTicket) => Promise<boolean>;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 /** "Merge": pick a target by ticket number or subject, confirm inline. */
@@ -21,6 +23,7 @@ export function MergeControl({
   labels,
   onMerge,
   buttonClassName,
+  fieldClassName,
 }: MergeControlProps) {
   return (
     <Popover
@@ -35,6 +38,7 @@ export function MergeControl({
           source={source}
           labels={labels}
           buttonClassName={buttonClassName}
+          fieldClassName={fieldClassName}
           onMerge={async (target) => {
             const merged = await onMerge(target);
             if (merged) close();
@@ -50,12 +54,14 @@ function MergePanel({
   source,
   labels,
   buttonClassName,
+  fieldClassName,
   onMerge,
 }: {
   client: SupportFetchClient;
   source: WireAgentTicket;
   labels: InboxLabels;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
   onMerge: (target: WireAgentTicket) => Promise<void>;
 }) {
   const [text, setText] = useState("");
@@ -82,7 +88,7 @@ function MergePanel({
         onChange={(event) => setText(event.target.value)}
         aria-label={labels.mergeSearch}
         placeholder={labels.mergeSearch}
-        className={cx(FIELD_CLASS, "w-full")}
+        className={fieldClass(fieldClassName, "w-full")}
       />
       {target ? (
         <Confirm
@@ -108,7 +114,10 @@ function MergePanel({
                 data-menu-item
                 aria-label={`${labels.mergeInto(ticket.number)}: ${ticket.subject}`}
                 onClick={() => setTarget(ticket)}
-                className="flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cx(
+                  "flex w-full items-baseline gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  TOUCH_TARGET,
+                )}
               >
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {labels.ticketNumber(ticket.number)}

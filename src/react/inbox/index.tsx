@@ -36,13 +36,18 @@ export type SupportInboxProps = {
   pollInterval?: number;
   /** Shared keys (`SupportLabels`) plus this component's own. */
   labels?: Partial<SupportLabels & SupportInboxLabels>;
-  /** Added to the root's classes. Every class prop appends. */
+  /**
+   * Added to the root's classes. Every class prop appends. Buttons, fields
+   * and rows are at least 44px tall on a coarse pointer (touch).
+   */
   className?: string;
   queueClassName?: string;
   threadClassName?: string;
   messageClassName?: string;
   composerClassName?: string;
   buttonClassName?: string;
+  /** Added to every text input, select and textarea (not checkboxes, radios or the file input). */
+  fieldClassName?: string;
 };
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -50,7 +55,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 const defaultNavigate = (href: string) => window.location.assign(href);
 
 /**
- * The agent inbox: queue with filters, thread, reply/note toggle, canned
+ * The staff inbox: queue with filters, thread, reply/note toggle, canned
  * replies, @mentions, attachments, status/priority/assignee/tags, bulk
  * update, merge and delete (attachment and merge UI hidden when their
  * `features` flag is false).
@@ -76,6 +81,7 @@ export function SupportInbox({
   messageClassName,
   composerClassName,
   buttonClassName,
+  fieldClassName,
 }: SupportInboxProps): ReactNode {
   const labels = useMemo<InboxLabels>(
     () => ({
@@ -197,6 +203,7 @@ export function SupportInbox({
           }
         }}
         buttonClassName={buttonClassName}
+        fieldClassName={fieldClassName}
         className={cx(
           openId ? "hidden md:flex" : "flex",
           "w-full border-b border-border md:w-80 md:shrink-0 md:border-b-0 md:border-r",
@@ -230,6 +237,7 @@ export function SupportInbox({
           messageClassName={messageClassName}
           composerClassName={composerClassName}
           buttonClassName={buttonClassName}
+          fieldClassName={fieldClassName}
         />
       ) : (
         <div

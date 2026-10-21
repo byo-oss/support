@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { TicketStatus } from "../../schema";
+import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, UseSupportAgentTicketResult } from "../hooks";
 import { useSupportUpload } from "../hooks";
 import { CannedPicker } from "./canned";
@@ -8,7 +9,7 @@ import {
   Button,
   buttonClass,
   cx,
-  FIELD_CLASS,
+  fieldClass,
   PICKER_PANEL,
   Popover,
 } from "./primitives";
@@ -29,6 +30,7 @@ type ComposerProps = {
   labels: InboxLabels;
   className?: string | undefined;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 type Mode = "reply" | "note";
@@ -45,6 +47,7 @@ export function Composer({
   labels,
   className,
   buttonClassName,
+  fieldClassName,
 }: ComposerProps) {
   const [body, setBody] = useState("");
   const [mode, setMode] = useState<Mode>("reply");
@@ -149,7 +152,8 @@ export function Composer({
           <label
             key={value}
             className={cx(
-              "cursor-pointer rounded-md border border-border px-2.5 py-1 text-sm has-[:checked]:bg-primary has-[:checked]:text-primary-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+              "inline-flex cursor-pointer items-center rounded-md border border-border px-2.5 py-1 text-sm has-[:checked]:bg-primary has-[:checked]:text-primary-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+              TOUCH_TARGET,
               buttonClassName,
             )}
           >
@@ -174,8 +178,8 @@ export function Composer({
         aria-label={labels.composerLabel}
         placeholder={labels.message}
         rows={4}
-        className={cx(
-          FIELD_CLASS,
+        className={fieldClass(
+          fieldClassName,
           "w-full resize-y",
           note && "border-dashed bg-accent/40",
         )}
@@ -196,7 +200,10 @@ export function Composer({
                 type="button"
                 aria-label={labels.removeAttachment(upload.filename)}
                 onClick={() => uploads.remove(upload.id)}
-                className="rounded px-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className={cx(
+                  "rounded px-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  TOUCH_ICON,
+                )}
               >
                 <span aria-hidden>×</span>
               </button>
@@ -225,6 +232,7 @@ export function Composer({
           client={client}
           labels={labels}
           buttonClassName={buttonClassName}
+          fieldClassName={fieldClassName}
           onInsert={(value) => insert(value, false)}
         />
         <Popover
@@ -248,7 +256,10 @@ export function Composer({
                       mention(agent);
                       close();
                     }}
-                    className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className={cx(
+                      "w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      TOUCH_TARGET,
+                    )}
                   >
                     {agent.name}
                   </button>
@@ -288,7 +299,7 @@ export function Composer({
           onChange={(event) =>
             setStatusOnSend(event.target.value as TicketStatus | "")
           }
-          className={FIELD_CLASS}
+          className={fieldClass(fieldClassName)}
         >
           <option value="">{labels.statusOnSendDefault}</option>
           {STATUSES.map((status) => (

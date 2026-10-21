@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { TOUCH_TARGET } from "../classes";
 import {
   type SupportFetchClient,
   useSupportTicket,
@@ -48,6 +49,7 @@ export type ThreadViewProps = {
   className: string | undefined;
   messageClassName: string | undefined;
   composerClassName: string | undefined;
+  fieldClassName: string | undefined;
 };
 
 /** Revoke a blob URL a minute after it was handed to the browser. */
@@ -67,6 +69,7 @@ export function ThreadView({
   className,
   messageClassName,
   composerClassName,
+  fieldClassName,
 }: ThreadViewProps) {
   const thread = useSupportTicket(
     client,
@@ -274,7 +277,9 @@ export function ThreadView({
             </fieldset>
           ) : null}
           {ticket.organizationId ? (
-            <label className="flex items-center gap-2 text-sm">
+            <label
+              className={cn("flex items-center gap-2 text-sm", TOUCH_TARGET)}
+            >
               <input
                 type="checkbox"
                 checked={ticket.visibility === "organization"}
@@ -301,6 +306,7 @@ export function ThreadView({
           attachmentsEnabled={attachmentsEnabled}
           uploads={uploads}
           className={composerClassName}
+          fieldClassName={fieldClassName}
           onSend={async (body, attachmentIds) => {
             const done = await run(
               thread.reply({
@@ -376,7 +382,11 @@ function MessageBody({
               <button
                 type="button"
                 onClick={() => void onDownload(attachment)}
-                className={cn("rounded px-1 underline", focusRing)}
+                className={cn(
+                  "rounded px-1 underline",
+                  focusRing,
+                  TOUCH_TARGET,
+                )}
               >
                 {labels.downloadAttachment(attachment.filename)}
               </button>
@@ -446,12 +456,14 @@ function Composer({
   attachmentsEnabled,
   uploads,
   className,
+  fieldClassName,
   onSend,
 }: {
   labels: WidgetLabels;
   attachmentsEnabled: boolean;
   uploads: UploadState;
   className: string | undefined;
+  fieldClassName: string | undefined;
   onSend: (body: string, attachmentIds: string[]) => Promise<boolean>;
 }) {
   const [body, setBody] = useState("");
@@ -509,7 +521,7 @@ function Composer({
         placeholder={labels.replyPlaceholder}
         rows={3}
         maxLength={50_000}
-        className={cn(fieldBase, "resize-y")}
+        className={cn(fieldBase, "resize-y", fieldClassName)}
       />
       {attachmentsEnabled ? (
         <>
@@ -529,7 +541,11 @@ function Composer({
                   <button
                     type="button"
                     onClick={() => uploads.remove(attachment.id)}
-                    className={cn("shrink-0 rounded px-1 underline", focusRing)}
+                    className={cn(
+                      "shrink-0 rounded px-1 underline",
+                      focusRing,
+                      TOUCH_TARGET,
+                    )}
                   >
                     {labels.removeAttachment(attachment.filename)}
                   </button>

@@ -4,14 +4,14 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { TOUCH_TARGET } from "../classes";
 
 /** Joins class names, skipping empty ones. */
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
 }
 
-const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50";
+const BUTTON_BASE = `inline-flex items-center justify-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 ${TOUCH_TARGET}`;
 const BUTTON_DEFAULT = "bg-background text-foreground hover:bg-accent";
 const BUTTON_PRIMARY =
   "border-transparent bg-primary text-primary-foreground hover:bg-primary/90";
@@ -59,9 +59,16 @@ export function Button({
   );
 }
 
-/** Class string of the native selects and inputs. */
-export const FIELD_CLASS =
-  "min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+/** Class string of the native selects, inputs and textareas (before the app's `fieldClassName`). */
+export const FIELD_CLASS = `min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${TOUCH_TARGET}`;
+
+/** The class string of a field: defaults, the part's own layout classes, then the app's `fieldClassName`. */
+export function fieldClass(
+  fieldClassName: string | undefined,
+  ...layout: (string | false | null | undefined)[]
+): string {
+  return cx(FIELD_CLASS, ...layout, fieldClassName);
+}
 
 /**
  * Calls `onDismiss` on Escape and on a mouse press outside `containerRef`,

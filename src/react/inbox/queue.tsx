@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
+import { TOUCH_TARGET } from "../classes";
 import type { UseSupportQueueResult, WireAgentTicket } from "../hooks";
 import {
   Button,
   buttonClass,
   Confirm,
   cx,
-  FIELD_CLASS,
+  fieldClass,
   toDate,
 } from "./primitives";
 import type { InboxLabels, SupportAgent } from "./types";
@@ -39,6 +40,7 @@ type QueuePaneProps = {
   onDeleted: (ids: string[]) => void;
   className?: string | undefined;
   buttonClassName?: string | undefined;
+  fieldClassName?: string | undefined;
 };
 
 const UNASSIGN = "__none__";
@@ -60,6 +62,7 @@ export function QueuePane({
   onDeleted,
   className,
   buttonClassName,
+  fieldClassName,
 }: QueuePaneProps) {
   const { tickets, counts } = queue;
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -112,6 +115,7 @@ export function QueuePane({
       onClick={apply}
       className={cx(
         "rounded-full border border-border px-2 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        TOUCH_TARGET,
         active
           ? "bg-accent text-accent-foreground"
           : "text-muted-foreground hover:text-foreground",
@@ -173,7 +177,7 @@ export function QueuePane({
           onChange={(event) => onSearchChange(event.target.value)}
           aria-label={labels.search}
           placeholder={labels.search}
-          className={cx(FIELD_CLASS, "w-full")}
+          className={fieldClass(fieldClassName, "w-full")}
         />
         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
           <select
@@ -185,7 +189,7 @@ export function QueuePane({
                 status: event.target.value as TicketStatus | "",
               })
             }
-            className={FIELD_CLASS}
+            className={fieldClass(fieldClassName)}
           >
             <option value="">{labels.allStatuses}</option>
             {STATUSES.map((status) => (
@@ -200,7 +204,7 @@ export function QueuePane({
             onChange={(event) =>
               onFiltersChange({ ...filters, assignee: event.target.value })
             }
-            className={FIELD_CLASS}
+            className={fieldClass(fieldClassName)}
           >
             <option value="">{labels.allAssignees}</option>
             <option value="me">{labels.assignedToMe}</option>
@@ -217,7 +221,7 @@ export function QueuePane({
             onChange={(event) =>
               onFiltersChange({ ...filters, tag: event.target.value })
             }
-            className={FIELD_CLASS}
+            className={fieldClass(fieldClassName)}
           >
             <option value="">{labels.allTags}</option>
             {queue.tags.map((tag) => (
@@ -251,7 +255,7 @@ export function QueuePane({
                 if (event.target.value)
                   bulk({ status: event.target.value as TicketStatus });
               }}
-              className={FIELD_CLASS}
+              className={fieldClass(fieldClassName)}
             >
               <option value="">{labels.bulkStatus}</option>
               {STATUSES.map((status) => (
@@ -271,7 +275,7 @@ export function QueuePane({
                     value === CLEAR_PRIORITY ? null : (value as TicketPriority),
                 });
               }}
-              className={FIELD_CLASS}
+              className={fieldClass(fieldClassName)}
             >
               <option value="">{labels.bulkPriority}</option>
               {PRIORITIES.map((priority) => (
@@ -289,7 +293,7 @@ export function QueuePane({
                 if (!value) return;
                 bulk({ assigneeId: value === UNASSIGN ? null : value });
               }}
-              className={FIELD_CLASS}
+              className={fieldClass(fieldClassName)}
             >
               <option value="">{labels.bulkAssignee}</option>
               <option value={UNASSIGN}>{labels.unassigned}</option>
@@ -316,7 +320,7 @@ export function QueuePane({
               onChange={(event) => setTagDraft(event.target.value)}
               aria-label={labels.tagPlaceholder}
               placeholder={labels.tagPlaceholder}
-              className={cx(FIELD_CLASS, "flex-1")}
+              className={fieldClass(fieldClassName, "flex-1")}
             />
             <datalist id="support-inbox-bulk-tags">
               {queue.tags.map((tag) => (
@@ -381,7 +385,12 @@ export function QueuePane({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {tickets.length > 0 ? (
-          <label className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <label
+            className={cx(
+              "flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground",
+              TOUCH_TARGET,
+            )}
+          >
             <input
               type="checkbox"
               checked={allChecked}
@@ -461,19 +470,25 @@ function QueueRow({
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
       )}
     >
-      <input
-        type="checkbox"
-        className="mt-1"
-        aria-label={labels.selectTicket(ticket.number)}
-        checked={checked}
-        onChange={(event) => onToggle(event.target.checked)}
-      />
+      {/* the label widens the checkbox's hit area on a touch screen */}
+      <label className="flex shrink-0 cursor-pointer justify-center pointer-coarse:-my-2 pointer-coarse:-ml-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">
+        <input
+          type="checkbox"
+          className="mt-1 pointer-coarse:mt-0"
+          aria-label={labels.selectTicket(ticket.number)}
+          checked={checked}
+          onChange={(event) => onToggle(event.target.checked)}
+        />
+      </label>
       <button
         type="button"
         data-ticket-id={ticket.id}
         aria-current={active ? "true" : undefined}
         onClick={onOpen}
-        className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cx(
+          "min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          TOUCH_TARGET,
+        )}
       >
         <span className="flex items-center gap-1.5">
           {ticket.unread ? (

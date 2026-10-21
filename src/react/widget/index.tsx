@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { TOUCH_TARGET } from "../classes";
 import {
   type SupportFetchClient,
   useSupportTickets,
@@ -85,7 +86,11 @@ export type SupportWidgetProps = {
   badgePollInterval?: number;
   /** Shared keys (`SupportLabels`) plus this component's own. */
   labels?: Partial<SupportLabels & SupportWidgetLabels>;
-  /** Added to the root's classes (the panel itself for `inline`). Every class prop appends. */
+  /**
+   * Added to the root's classes (the panel itself for `inline`). Every class
+   * prop appends. Buttons, fields and rows are at least 44px tall on a coarse
+   * pointer (touch).
+   */
   className?: string;
   listClassName?: string;
   threadClassName?: string;
@@ -93,6 +98,8 @@ export type SupportWidgetProps = {
   composerClassName?: string;
   /** Added to the launcher's classes (popover only). */
   buttonClassName?: string;
+  /** Added to every text input and textarea (not checkboxes or the file input). */
+  fieldClassName?: string;
 };
 
 type View =
@@ -104,7 +111,7 @@ const defaultNavigate = (href: string) => window.location.assign(href);
 
 const DEFAULT_BADGE_POLL_INTERVAL = 60_000;
 
-const LAUNCHER_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing}`;
+const LAUNCHER_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing} ${TOUCH_TARGET}`;
 
 const PANEL_CLASS =
   "flex flex-col overflow-hidden rounded-lg border border-border bg-background text-foreground";
@@ -139,6 +146,7 @@ export function SupportWidget({
   messageClassName,
   composerClassName,
   buttonClassName,
+  fieldClassName,
 }: SupportWidgetProps): ReactNode {
   const labels = resolveWidgetLabels(labelOverrides);
   const inline = variant === "inline";
@@ -318,6 +326,7 @@ export function SupportWidget({
           focusOnMount={focusOnMount}
           className={listClassName}
           composerClassName={composerClassName}
+          fieldClassName={fieldClassName}
         />
       ) : null}
       {view.name === "thread" ? (
@@ -336,6 +345,7 @@ export function SupportWidget({
           className={threadClassName}
           messageClassName={messageClassName}
           composerClassName={composerClassName}
+          fieldClassName={fieldClassName}
         />
       ) : null}
     </>

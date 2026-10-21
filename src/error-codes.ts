@@ -21,7 +21,7 @@ export const SUPPORT_ERROR_CODES = defineErrorCodes({
   ATTACHMENT_TOO_LARGE: "The attachment is too large",
   ATTACHMENT_TYPE_NOT_ALLOWED: "This file type is not allowed",
   ATTACHMENT_NOT_USABLE: "One or more attachments can't be used here",
-  NOT_AN_AGENT: "That user is not a support agent",
+  NOT_AN_AGENT: "That user is not on the support team",
   // added by N04 for codes the module contracts name
   INVALID_STATUS_TRANSITION: "This status change is not allowed",
   INVALID_CURSOR: "Invalid cursor",

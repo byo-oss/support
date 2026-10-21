@@ -20,7 +20,7 @@ npm install @byo-oss/support
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer and `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20 or newer, `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 
@@ -337,6 +337,14 @@ The components poll; there are no websockets. While the tab is hidden, nothing p
 - **Inbox:** the queue and the open ticket every `pollInterval` (15 s by default).
 
 `0` turns either interval off. The two widget intervals are independent: `pollInterval={0}` leaves the badge poll on.
+
+### Wording, sizes and fields
+
+**Wording.** The default copy never says "agent" or "inbox", which apps often use for their own AI agents and inbox: the staff view's heading is "Support queue", a reply from staff without a name shows as "Support", and the message of `NOT_AN_AGENT` (which your app may show) says "That user is not on the support team". The API keeps "agent" as the name of the staff role: `SupportInbox` and its `agents` prop, the `/support/agent/*` endpoints, `isAgent`, `NOT_AN_AGENT`, `authorType: "agent"` and the `support.agent.*` events. Rename anything on screen with `labels`.
+
+**Sizes.** On a coarse pointer (a touch screen), every button, field, ticket row and checkbox label is at least 44 px tall, and the × buttons are 44 px wide as well. With a mouse or trackpad they keep their compact size (about 32 px). This uses Tailwind's `pointer-coarse:` variant, which needs Tailwind 4.1 or newer; on 4.0 the controls stay compact everywhere. Your `@source` line already covers these classes.
+
+**Fields.** `fieldClassName`, on both components, is added to every text input, select and textarea (not to checkboxes, radios or the file input). Like the other class props it appends with no merging; see [Tailwind](#tailwind).
 
 ## Email replies
 
@@ -929,7 +937,7 @@ The components are styled with Tailwind classes only: without Tailwind they rend
 
 The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`, which current shadcn themes don't define.
 
-Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button.
+Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName`, `buttonClassName` and `fieldClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button. `fieldClassName` goes on every text input, select and textarea of either component.
 
 There is no class merging: your classes are added after the defaults as they are, and nothing like `tailwind-merge` removes a default that conflicts. When both set the same property (`p-4` on top of the component's `p-3`, say), the order of the rules in the generated CSS decides, not the order of the classes, so yours may lose. To win, use Tailwind's `!` important modifier (`p-4!`) or a more specific variant or selector. Running your own string through a merge helper (`cn(...)`) only tidies that string; it can't take a default away.
 
