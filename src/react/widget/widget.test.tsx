@@ -7,7 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupportFetchClient } from "../hooks";
 import { defaultLabels } from "../labels";
@@ -129,7 +129,12 @@ function renderWidget(
 ) {
   const { client, mocks } = makeClient(setup);
   const view = render(
-    <SupportWidget client={client} pollInterval={0} {...props} />,
+    <SupportWidget
+      client={client}
+      pollInterval={0}
+      badgePollInterval={0}
+      {...props}
+    />,
   );
   return { ...view, client, mocks };
 }
@@ -1183,6 +1188,208 @@ describe("SupportWidget labels", () => {
   });
 });
 
+describe("SupportWidget inline variant", () => {
+  it("renders the panel in place, with no launcher and no dialog", async () => {
+    renderWidget({}, { variant: "inline" });
+    expect(screen.getByRole("region", { name: "Support" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Support" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      await screen.findByRole("button", { name: /Subject t1/ }),
+    ).toBeTruthy();
+    // the page keeps its focus on mount
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("does not close on Escape, a click outside or open={false}", async () => {
+    renderWidget({}, { variant: "inline", open: false });
+    await screen.findByRole("button", { name: /Subject t1/ });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.mouseDown(document.body);
+    expect(screen.getByRole("region", { name: "Support" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Subject t1/ })).toBeTruthy();
+  });
+
+  it("opens ticketId's thread in place, Back goes to the list, a new id opens it", async () => {
+    const { client, mocks, rerender } = renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { variant: "inline", ticketId: "t2" },
+    );
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: /Subject t1/ }),
+    ).toBeTruthy();
+    // moving between views inside the widget takes focus
+    expect(document.activeElement).toBe(
+      screen.getByRole("heading", { name: "My tickets" }),
+    );
+
+    mocks.ticket.mockImplementation(() =>
+      ok({ ticket: ticket("t1"), messages: [], attachments: [] }),
+    );
+    rerender(
+      <SupportWidget
+        client={client}
+        pollInterval={0}
+        variant="inline"
+        ticketId="t1"
+      />,
+    );
+    await screen.findByRole("heading", { name: /Subject t1/ });
+  });
+});
+
+describe("SupportWidget open state", () => {
+  it("defaultOpen opens the panel on the list", async () => {
+    renderWidget({}, { defaultOpen: true });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: /Subject t1/ }),
+    ).toBeTruthy();
+  });
+
+  it("defaultOpen={false} with ticketId starts closed, then opens on that ticket", async () => {
+    renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { ticketId: "t2", defaultOpen: false },
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger());
+    await screen.findByRole("heading", { name: /Subject t2/ });
+  });
+
+  it("is controlled by open, and asks onOpenChange to change it", async () => {
+    const onOpenChange = vi.fn();
+    const { client, rerender } = renderWidget({}, { open: true, onOpenChange });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    fireEvent.click(trigger());
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(screen.getByRole("dialog")).toBeTruthy(); // the app decides
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    fireEvent.mouseDown(document.body);
+    expect(onOpenChange).toHaveBeenCalledTimes(3);
+
+    const props = { client, pollInterval: 0, badgePollInterval: 0 };
+    rerender(
+      <SupportWidget {...props} open={false} onOpenChange={onOpenChange} />,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(trigger());
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the same ticketId again when the app reopens the panel", async () => {
+    const { client } = makeClient({ detail: { ticket: ticket("t2") } });
+    function Page() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Email link
+          </button>
+          <SupportWidget
+            client={client}
+            pollInterval={0}
+            badgePollInterval={0}
+            ticketId="t2"
+            open={open}
+            onOpenChange={setOpen}
+          />
+        </>
+      );
+    }
+    render(<Page />);
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: /Subject t1/ });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // the launcher reopens where the user left off
+    fireEvent.click(trigger());
+    await screen.findByRole("button", { name: /Subject t1/ });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // the app opening it again shows the linked ticket
+    fireEvent.click(screen.getByRole("button", { name: "Email link" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await screen.findByRole("heading", { name: /Subject t2/ });
+  });
+});
+
+describe("SupportWidget polling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("polls at badgePollInterval (60 s) while closed and pollInterval (15 s) while open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { mocks } = renderWidget(
+      {},
+      { pollInterval: undefined, badgePollInterval: undefined },
+    );
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(trigger());
+    await screen.findByRole("dialog");
+    // opening refreshes once, then polls at pollInterval
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalledTimes(3));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(4);
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(5);
+  });
+
+  it("takes custom intervals, and pauses the badge poll while the tab is hidden", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { mocks } = renderWidget(
+      {},
+      { pollInterval: 1000, badgePollInterval: 5000 },
+    );
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(mocks.myTickets).toHaveBeenCalledTimes(2);
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    }
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(3);
+  });
+
+  it("polls at pollInterval inline", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { mocks } = renderWidget(
+      {},
+      { variant: "inline", pollInterval: undefined, badgePollInterval: 5000 },
+    );
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mocks.myTickets).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("SupportWidget classes and layout", () => {
   it("applies className and the per-part class props", async () => {
     const { container } = renderWidget(
@@ -1202,21 +1409,32 @@ describe("SupportWidget classes and layout", () => {
       },
     );
     expect(container.firstElementChild?.className).toContain("root-x");
+    // class props append: the launcher keeps its own look
     expect(trigger().className).toContain("button-x");
-    // buttonClassName replaces the default look
-    expect(trigger().className).not.toContain("bg-background");
+    expect(trigger().className).toContain("bg-background");
+    expect(trigger().className).toContain("rounded-md");
 
     await openPanel();
-    expect(document.querySelector(".list-x")).not.toBeNull();
+    expect(document.querySelector(".list-x")?.className).toContain("flex");
     fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
     expect(document.querySelector(".composer-x")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
     await screen.findByText("Body m1");
-    expect(document.querySelector(".thread-x")).not.toBeNull();
-    expect(document.querySelector(".message-x")).not.toBeNull();
+    expect(document.querySelector(".thread-x")?.className).toContain("flex");
+    expect(document.querySelector(".message-x")?.className).toContain(
+      "rounded",
+    );
     expect(document.querySelector(".composer-x")).not.toBeNull();
+  });
+
+  it("appends className to the inline panel's own classes", () => {
+    renderWidget({}, { variant: "inline", className: "root-x" });
+    const panel = screen.getByRole("region", { name: "Support" });
+    expect(panel.className).toContain("root-x");
+    expect(panel.className).toContain("w-full");
+    expect(panel.className).toContain("border-border");
   });
 
   it("uses no fixed width above 360px", async () => {

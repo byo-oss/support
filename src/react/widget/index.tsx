@@ -29,21 +29,55 @@ export type SupportWidgetProps = {
   /** Organization for new tickets and "share with my organization". */
   organizationId?: string;
   /**
-   * Opens the panel on this ticket's thread, for links from emails (route
-   * `ticketPath(id)` to a page that renders `<SupportWidget ticketId={id} />`).
-   * A new value opens that ticket; Back still goes to the list. A ticket the
-   * caller can't read shows the thread's error state.
+   * `"popover"`: a launcher button with the unread count opens the panel
+   * below it, right-aligned; meant for a header. `"inline"`: the panel in
+   * place at the full width of its container, always open, with no
+   * launcher; meant for a page of its own ("my tickets", email deep links).
+   * @default "popover"
+   */
+  variant?: "popover" | "inline";
+  /**
+   * Opens this ticket's thread, for links from emails (route `ticketPath(id)`
+   * to a page that renders `<SupportWidget variant="inline" ticketId={id} />`).
+   * A popover starts open unless `defaultOpen` or `open` says otherwise. A new
+   * value opens that ticket; Back still goes to the list. A ticket the caller
+   * can't read shows the thread's error state.
    */
   ticketId?: string;
-  /** Poll interval in ms. @default 15000 */
+  /** Popover only: whether the panel starts open. @default Boolean(ticketId) */
+  defaultOpen?: boolean;
+  /**
+   * Popover only: controls whether the panel is open; pair it with
+   * `onOpenChange`. When the app opens the panel (closed to open, not from
+   * the launcher) while `ticketId` is set, the panel shows that ticket's
+   * thread, so the same link can open it again after the user closed it.
+   */
+  open?: boolean;
+  /**
+   * Popover only: called when the launcher, Escape, a click outside or a new
+   * `ticketId` asks to open or close the panel.
+   */
+  onOpenChange?: (open: boolean) => void;
+  /**
+   * Poll interval in ms while the panel is open (always, for `inline`): the
+   * ticket list and the open thread. 0 disables polling. @default 15000
+   */
   pollInterval?: number;
+  /**
+   * Popover only: poll interval in ms for the ticket list while the panel is
+   * closed, which keeps the launcher's unread count fresh. 0 disables it.
+   * @default 60000
+   */
+  badgePollInterval?: number;
   /** Shared keys (`SupportLabels`) plus this component's own. */
   labels?: Partial<SupportLabels & SupportWidgetLabels>;
+  /** Added to the root's classes (the panel itself for `inline`). Every class prop appends. */
   className?: string;
   listClassName?: string;
   threadClassName?: string;
   messageClassName?: string;
   composerClassName?: string;
+  /** Added to the launcher's classes (popover only). */
   buttonClassName?: string;
 };
 
@@ -54,24 +88,35 @@ type View =
 
 const defaultNavigate = (href: string) => window.location.assign(href);
 
-const DEFAULT_BUTTON_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing}`;
+const DEFAULT_BADGE_POLL_INTERVAL = 60_000;
+
+const LAUNCHER_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing}`;
+
+const PANEL_CLASS =
+  "flex flex-col overflow-hidden rounded-lg border border-border bg-background text-foreground";
 
 /**
  * The customer widget: ticket list, new ticket, thread, reply with
  * attachments (hidden when `features.attachments` is false), solve/reopen,
  * rate, share with the organization.
  *
- * A launcher button (with the unread count) opens the panel. Escape or a
- * click outside closes it, and Escape returns focus to the launcher. With
- * `ticketId` the panel starts open on that ticket's thread.
+ * As a popover, a launcher button (with the unread count) opens the panel.
+ * Escape or a click outside closes it, and Escape returns focus to the
+ * launcher. With `ticketId` the panel starts open on that ticket's thread.
+ * Inline, the panel renders in place and never closes.
  */
 export function SupportWidget({
   client,
   onNavigate,
   renderMessage,
   organizationId,
+  variant = "popover",
   ticketId,
+  defaultOpen,
+  open: openProp,
+  onOpenChange,
   pollInterval,
+  badgePollInterval = DEFAULT_BADGE_POLL_INTERVAL,
   labels: labelOverrides,
   className,
   listClassName,
@@ -81,18 +126,45 @@ export function SupportWidget({
   buttonClassName,
 }: SupportWidgetProps): ReactNode {
   const labels = resolveWidgetLabels(labelOverrides);
+  const inline = variant === "inline";
+
+  const [openState, setOpenState] = useState(defaultOpen ?? Boolean(ticketId));
+  const controlled = openProp !== undefined;
+  const open = inline || (controlled ? openProp : openState);
+
+  const controlledRef = useRef(controlled);
+  controlledRef.current = controlled;
+  const onOpenChangeRef = useRef(onOpenChange);
+  onOpenChangeRef.current = onOpenChange;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const setOpen = useCallback((next: boolean) => {
+    if (!controlledRef.current) setOpenState(next);
+    onOpenChangeRef.current?.(next);
+  }, []);
+
   // the list is the customer's own and org-shared tickets; `organizationId`
-  // is for new tickets and sharing, so it does not filter the list
+  // is for new tickets and sharing, so it does not filter the list. A closed
+  // popover only needs the unread count, so it polls less often.
+  const listPollInterval = open ? pollInterval : badgePollInterval;
   const tickets = useSupportTickets(
     client,
-    pollInterval === undefined ? {} : { pollInterval },
+    listPollInterval === undefined ? {} : { pollInterval: listPollInterval },
   );
   const { refresh } = tickets;
 
-  const [open, setOpen] = useState(Boolean(ticketId));
   const [view, setView] = useState<View>(
     ticketId ? { name: "thread", ticketId } : { name: "list" },
   );
+  // an inline widget's first view leaves focus where the page put it; a
+  // view the user moves to takes focus
+  const navigated = useRef(false);
+  const go = useCallback((next: View) => {
+    navigated.current = true;
+    setView(next);
+  }, []);
+  const focusOnMount = !inline || navigated.current;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
@@ -105,11 +177,26 @@ export function SupportWidget({
     linked.current = ticketId;
     if (!ticketId) return;
     setView({ name: "thread", ticketId });
-    setOpen(true);
-  }, [ticketId]);
+    if (!inline && !openRef.current) setOpen(true);
+  }, [ticketId, inline, setOpen]);
+
+  // the app opening the panel (not the launcher) shows the linked ticket,
+  // so the same link works again after the user closed the panel
+  const launcherOpened = useRef(false);
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    const opened = open && !wasOpen.current;
+    wasOpen.current = open;
+    if (!opened) return;
+    if (launcherOpened.current) {
+      launcherOpened.current = false;
+      return;
+    }
+    if (ticketId) setView({ name: "thread", ticketId });
+  }, [open, ticketId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (inline || !open) return;
     const onPointerDown = (event: MouseEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) {
         setOpen(false);
@@ -127,19 +214,78 @@ export function SupportWidget({
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [inline, open, setOpen]);
 
   // opening is a deliberate look: show what arrived since the last poll
   useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    if (open && !inline) void refresh();
+  }, [open, inline, refresh]);
 
   const backToList = useCallback(() => {
-    setView({ name: "list" });
+    go({ name: "list" });
     void refresh();
-  }, [refresh]);
+  }, [go, refresh]);
 
   const unreadCount = tickets.tickets.filter((ticket) => ticket.unread).length;
+
+  const panelContent = (
+    <>
+      {view.name === "list" ? (
+        <ListView
+          tickets={tickets}
+          labels={labels}
+          onOpen={(ticketId) => go({ name: "thread", ticketId })}
+          onNew={() => go({ name: "new" })}
+          focusOnMount={focusOnMount}
+          className={listClassName}
+        />
+      ) : null}
+      {view.name === "new" ? (
+        <NewTicketView
+          tickets={tickets}
+          labels={labels}
+          organizationId={organizationId}
+          onBack={backToList}
+          onCreated={(ticketId) => go({ name: "thread", ticketId })}
+          focusOnMount={focusOnMount}
+          className={listClassName}
+          composerClassName={composerClassName}
+        />
+      ) : null}
+      {view.name === "thread" ? (
+        <ThreadView
+          key={view.ticketId}
+          client={client}
+          ticketId={view.ticketId}
+          labels={labels}
+          attachmentsEnabled={tickets.features.attachments}
+          pollInterval={pollInterval}
+          onNavigate={onNavigate ?? defaultNavigate}
+          renderMessage={renderMessage}
+          onChanged={refresh}
+          onBack={backToList}
+          focusOnMount={focusOnMount}
+          className={threadClassName}
+          messageClassName={messageClassName}
+          composerClassName={composerClassName}
+        />
+      ) : null}
+    </>
+  );
+
+  if (inline) {
+    return (
+      <section
+        aria-label={labels.support}
+        className={cn(PANEL_CLASS, "w-full min-w-0", className)}
+      >
+        <span className="sr-only" aria-live="polite">
+          {unreadCount > 0 ? labels.unreadCount(unreadCount) : ""}
+        </span>
+        {panelContent}
+      </section>
+    );
+  }
 
   return (
     <div
@@ -152,8 +298,11 @@ export function SupportWidget({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         aria-describedby={countId}
-        onClick={() => setOpen((value) => !value)}
-        className={cn(buttonClassName ?? DEFAULT_BUTTON_CLASS)}
+        onClick={() => {
+          launcherOpened.current = !open;
+          setOpen(!open);
+        }}
+        className={cn(LAUNCHER_CLASS, buttonClassName)}
       >
         {labels.support}
         {unreadCount > 0 ? (
@@ -175,45 +324,12 @@ export function SupportWidget({
           id={panelId}
           role="dialog"
           aria-label={labels.support}
-          className="absolute right-0 z-50 mt-2 flex max-h-[min(80vh,40rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] flex-col overflow-hidden rounded-lg border border-border bg-background text-foreground shadow-md"
+          className={cn(
+            PANEL_CLASS,
+            "absolute right-0 z-50 mt-2 max-h-[min(80vh,40rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] shadow-md",
+          )}
         >
-          {view.name === "list" ? (
-            <ListView
-              tickets={tickets}
-              labels={labels}
-              onOpen={(ticketId) => setView({ name: "thread", ticketId })}
-              onNew={() => setView({ name: "new" })}
-              className={listClassName}
-            />
-          ) : null}
-          {view.name === "new" ? (
-            <NewTicketView
-              tickets={tickets}
-              labels={labels}
-              organizationId={organizationId}
-              onBack={backToList}
-              onCreated={(ticketId) => setView({ name: "thread", ticketId })}
-              className={listClassName}
-              composerClassName={composerClassName}
-            />
-          ) : null}
-          {view.name === "thread" ? (
-            <ThreadView
-              key={view.ticketId}
-              client={client}
-              ticketId={view.ticketId}
-              labels={labels}
-              attachmentsEnabled={tickets.features.attachments}
-              pollInterval={pollInterval}
-              onNavigate={onNavigate ?? defaultNavigate}
-              renderMessage={renderMessage}
-              onChanged={refresh}
-              onBack={backToList}
-              className={threadClassName}
-              messageClassName={messageClassName}
-              composerClassName={composerClassName}
-            />
-          ) : null}
+          {panelContent}
         </div>
       ) : null}
     </div>

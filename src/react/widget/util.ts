@@ -44,7 +44,7 @@ export const MAX_ATTACHMENTS = 10;
 export const focusRing =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-/** Default look of the widget's own buttons. `buttonClassName` replaces the trigger's look only. */
+/** Default look of the widget's own buttons. `buttonClassName` adds to the launcher only. */
 export const buttonBase = `inline-flex items-center justify-center rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 export const primaryButton = `inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`;
 export const fieldBase = `w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground ${focusRing}`;

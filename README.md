@@ -31,6 +31,8 @@ Optional peers, each behind its own import so the root never loads them:
 | `@aws-sdk/client-s3` | `s3Storage` from `@byo-oss/support/s3`, and `wrapsInbound` |
 | `vitest` | `@byo-oss/support/testing` (ESM only) |
 
+In a monorepo, add `@byo-oss/support` as a direct dependency of the web app's package (not only of a shared server package): the app imports `@byo-oss/support/react`, and Tailwind's `@source` path points into that package's `node_modules`.
+
 The `Mailer` type comes from [`@byo-oss/mailer`](https://github.com/byo-oss/mailer), which is a dependency of this package. Install it yourself if you import `memoryMailer` or `PermanentMailError` from it.
 
 ## Setup
@@ -113,7 +115,7 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    });
    ```
 
-5. **Render the components.** The widget goes where signed-in customers ask for help; the inbox goes on a staff-only page:
+5. **Render the components.** The widget goes at the right end of your header, for signed-in customers; the inbox goes on a staff-only page:
 
    ```tsx
    "use client";
@@ -121,7 +123,7 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    import { useRouter } from "next/navigation";
    import { authClient } from "@/lib/auth-client";
 
-   export function HelpPage({ organizationId }: { organizationId?: string }) {
+   export function HeaderSupport({ organizationId }: { organizationId?: string }) {
      const router = useRouter();
      // organizationId: the customer's active organization, so tickets can be shared with teammates
      return (
@@ -135,14 +137,14 @@ Five steps give you customers opening and following tickets (in-app, with pollin
 
    export function StaffQueue({ agents }: { agents: { id: string; name: string; image?: string | null }[] }) {
      const router = useRouter();
-     // agents: your staff organization's members, for the assignee and @mention pickers
+     // agents: staff-organization members whose role grants support:read, for the assignee and @mention pickers
      return <SupportInbox client={authClient} agents={agents} onNavigate={(href) => router.push(href)} />;
    }
    ```
 
-   `onNavigate` takes your router: `router.push(href)` as above, or `navigate({ href })` with TanStack Router. Without it, links to your app inside messages use `location.assign`. Build `agents` on the server from the staff organization's members: `auth.api.getFullOrganization({ headers, query: { organizationId: staffOrganizationId } })`, mapped to `{ id, name, image }[]` (`member.userId`, `member.user.name`, `member.user.image`).
+   `onNavigate` takes your router: `router.push(href)` as above, or `navigate({ href })` with TanStack Router. Without it, links to your app inside messages use `location.assign`. Build `agents` from the staff organization's members whose role grants `support: ["read"]`, on the server or in the browser (see [Staff list](#staff-list-agents)).
 
-   Tailwind v4 skips `node_modules` when it scans for classes, so point it at the package or some classes won't be generated (see [Tailwind](#tailwind)). Both components poll every 15 seconds, paused while the tab is hidden, and every string has a `labels` override.
+   Tailwind v4 skips `node_modules` when it scans for classes, so point it at the package or some classes won't be generated (see [Tailwind](#tailwind)). Polling pauses while the tab is hidden (see [Polling](#polling) for the cost), and every string has a `labels` override. The widget is a popover for your header; for a page of its own, and for email and notification links, see [Components](#components).
 
 Server code can open a ticket without the widget too: `await auth.api.createSupportTicket({ headers, body: { subject, body } })`.
 
@@ -233,6 +235,92 @@ The owner role has every `support` action once step 2 is done. The other route i
 - **Statuses.** A new ticket is `open`. An agent reply sets `pending` unless the request sets a `status`. A customer reply on `pending` or `solved` reopens it. The requester can solve (from `open` or `pending`) and reopen (from `solved`). Agents can set any status. The sweep closes `solved` tickets after `autoCloseAfter`. A `closed` ticket takes no replies (`TICKET_CLOSED`): mail to it opens a new ticket with a `followup_of` event.
 - **Merging.** An agent can merge a ticket into another with the same requester and the same organization (`MERGE_NOT_ALLOWED` otherwise). Messages, tags, attachments and deliveries move to the target; the stricter `visibility` (`private`) and `verified` (`false`) win, and the target keeps the later `lastMessageAt` of the two; the source is closed with `mergedIntoId`. Every endpoint that takes a ticket id follows `mergedIntoId`, with the access rule re-applied to the target, except `mergeSupportTickets` and `deleteSupportTickets`, which act on the ids given.
 
+## Components
+
+### Widget: popover or inline
+
+`<SupportWidget />` is a popover by default: a launcher button with the unread count, and a panel that opens below it, 360 px wide at most, aligned to the launcher's right edge so it extends to the left. Put it at the right end of your header; near the left edge of the screen the panel would run off it. Escape or a click outside closes it.
+
+`variant="inline"` renders the panel in place instead, at the full width of its container, with no launcher, and it never closes. Use it for a page of its own: "My tickets", or the page your email links open.
+
+- `ticketId` opens that ticket's thread (a popover starts open unless `defaultOpen` or `open` says otherwise). A new value opens that ticket; Back goes to the list.
+- `defaultOpen` sets whether the popover starts open (default: open when `ticketId` is set).
+- `open` and `onOpenChange` control the popover. The launcher, Escape and a click outside call `onOpenChange`, and the panel follows `open`. When your app sets `open` to `true` (not the launcher) while `ticketId` is set, the panel shows that ticket's thread. That is how the same link opens the same ticket again after the user closed the panel: set `open` back to `true`. The launcher reopens wherever the user left off.
+
+```tsx
+const [open, setOpen] = useState(Boolean(ticketId));
+<SupportWidget client={authClient} ticketId={ticketId} open={open} onOpenChange={setOpen} />
+```
+
+### Deep links
+
+**Customers.** Email links (`ticketPath(id)`) and in-app notifications should open a page with the inline widget, which works at any width and doesn't close on the first click:
+
+```tsx
+// /help?ticket=<id>, or whatever ticketPath returns
+<SupportWidget client={authClient} variant="inline" ticketId={ticket ?? undefined} onNavigate={(href) => router.push(href)} />
+```
+
+**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`, called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop. For example, rendered on both `/staff/support` and `/staff/support/$id` with TanStack Router:
+
+```tsx
+export function StaffSupport({ ticketId, agents }: { ticketId?: string; agents: SupportAgent[] }) {
+  const navigate = useNavigate();
+  return (
+    <SupportInbox
+      client={authClient}
+      agents={agents}
+      ticketId={ticketId ?? null}
+      onTicketChange={(next) => navigate({ href: next ? `/staff/support/${next}` : "/staff/support" })}
+      onNavigate={(href) => navigate({ href })}
+    />
+  );
+}
+```
+
+With Next.js, pass the id from the route's params and push the same paths with `router.push`.
+
+### Staff list (`agents`)
+
+`agents` fills the inbox's assignee and @mention pickers. Keep only the staff organization's members whose role grants `support: ["read"]`: that is the check `isAgent` makes, so anyone else would show up in the pickers and fail with `NOT_AN_AGENT` when picked. Derive it from your roles' permissions, never from role names. A member can hold several roles (`"admin,billing"`).
+
+On the server, from the staff organization's members:
+
+```ts
+import { roles } from "./access"; // step 2
+
+const canRead = (role: string) =>
+  role.split(",").some((name) => roles[name.trim() as keyof typeof roles]?.authorize({ support: ["read"] }).success);
+
+const organization = await auth.api.getFullOrganization({ headers, query: { organizationId: staffOrganizationId } });
+const agents = (organization?.members ?? [])
+  .filter((member) => canRead(member.role))
+  .map((member) => ({ id: member.userId, name: member.user.name, image: member.user.image }));
+```
+
+In the browser (a single-page app with no server code of its own), from a staff member's session, with the same `canRead`, or better-auth's `authClient.organization.checkRolePermission({ role, permissions: { support: ["read"] } })` for each of the member's roles when `organizationClient` was given your `ac` and `roles`:
+
+```ts
+const { data } = await authClient.organization.listMembers({
+  query: { organizationId: staffOrganizationId, limit: 100 },
+});
+const agents = (data?.members ?? [])
+  .filter((member) => canRead(member.role))
+  .map((member) => ({ id: member.userId, name: member.user.name, image: member.user.image }));
+```
+
+Both read one page of members: `getFullOrganization` returns up to the organization plugin's `membershipLimit` (100 by default), and `listMembers` returns `limit` members (100 by default) and a `total`. With a larger staff organization, page through `listMembers` with `offset`.
+
+### Polling
+
+The components poll; there are no websockets. While the tab is hidden, nothing polls.
+
+- **Widget, closed popover:** the ticket list every `badgePollInterval` (60 s by default), for the launcher's unread count. That is one request a minute per signed-in tab on every page that shows the launcher.
+- **Widget, open or inline:** the ticket list and the open thread every `pollInterval` (15 s by default). Opening the popover refreshes at once.
+- **Inbox:** the queue and the open ticket every `pollInterval` (15 s by default).
+
+`0` turns either interval off. The two widget intervals are independent: `pollInterval={0}` leaves the badge poll on.
+
 ## Email replies
 
 Add a `Mailer` and `email` and every public agent reply is queued for the requester. Notes are never mailed.
@@ -260,7 +348,7 @@ support({
 
 What gets sent:
 
-- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget ticketId={id} />`: with `ticketId` the widget starts open on that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Set `ticketPath` whenever the default `/support/<id>` could collide with your routes, for example a top-level `/:org` segment where `support` would be read as an organization slug. Attachments go as that link, not as files.
+- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget variant="inline" ticketId={id} />` (see [Deep links](#deep-links)): with `ticketId` the widget shows that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Set `ticketPath` whenever the default `/support/<id>` could collide with your routes, for example a top-level `/:org` segment where `support` would be read as an organization slug. Attachments go as that link, not as files.
 - **The address** is resolved when the mail is sent: the account's email if verified (or any, with `requireVerifiedEmail: false`), else the account-less requester's `requesterEmail`. No address: the delivery is `skipped`.
 - **Delay.** A reply is due `replyDelay` after it was written (2 minutes by default) and skipped if the requester has seen the ticket since. With `replyDelay: 0` and better-auth's `advanced.backgroundTasks.handler` set, it sends inline; otherwise the sweep sends it.
 - **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known (`wrapsMailer` reports the SES id, not the header, so it stores none).
@@ -455,6 +543,7 @@ const onEvent = createEventBus([
       case "support.customer.replied": {
         const title = event.type === "support.ticket.created" ? "New support ticket" : "Customer replied";
         for (const userId of await supportStaff(event.actorId)) {
+          // `/staff/support/:id` renders <SupportInbox ticketId={id} /> (see Deep links)
           await auth.api.notify({
             body: { userId, type: event.type, title, href: `/staff/support/${ticketId}` },
           });
@@ -479,6 +568,7 @@ const onEvent = createEventBus([
       case "support.agent.replied":
         if (event.userId) {
           await auth.api.notify({
+            // the help page renders <SupportWidget variant="inline" ticketId={ticket} />
             body: { userId: event.userId, type: event.type, title: "New reply to your ticket", href: `/help?ticket=${ticketId}` },
           });
         }
@@ -799,7 +889,9 @@ Tailwind v4 skips `node_modules` when it scans for classes, so point it at the p
 
 The components are styled with Tailwind classes only: without Tailwind they render unstyled (they still work).
 
-The components use shadcn CSS variables (`bg-background`, `text-foreground`, `border`, `bg-accent`, `text-muted-foreground`, `bg-destructive`, `text-destructive-foreground`), with no UI runtime dependencies and no shadcn required. Pass `className` for the root and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts.
+The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`, which current shadcn themes don't define.
+
+Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button. To override a utility the component already sets (a padding, say), use Tailwind's `!` important modifier or a more specific selector.
 
 ## License
 

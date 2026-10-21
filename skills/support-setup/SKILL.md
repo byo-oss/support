@@ -26,10 +26,10 @@ Work through these in order. Each step ends on a check; move on only when it hol
 6. **Client plugin.** Add `supportClient()` from `@byo-oss/support/client` to `createAuthClient({ plugins })`. Done when `authClient.support.myTickets` and `authClient.support.agent.tickets` typecheck.
 
 7. **Components.** From `@byo-oss/support/react`:
-   - `<SupportWidget client={authClient} organizationId={activeOrganizationId} onNavigate={...} />` once, where signed-in customers ask for help. `organizationId` is the customer's own organization, so tickets can be shared with teammates.
-   - `<SupportInbox client={authClient} agents={agents} onNavigate={...} />` on a staff-only page. `agents` is the staff organization's members as `{ id, name, image? }`; the plugin doesn't enumerate staff.
+   - `<SupportWidget client={authClient} organizationId={activeOrganizationId} onNavigate={...} />` once, where signed-in customers ask for help. It is a popover whose panel extends to the left: put it at the right end of the header. For a page of its own, use `variant="inline"`. `organizationId` is the customer's own organization, so tickets can be shared with teammates.
+   - `<SupportInbox client={authClient} agents={agents} onNavigate={...} />` on a staff-only page. `agents` is the staff organization's members whose role grants `support: ["read"]` (what `isAgent` checks; anyone else fails with `NOT_AN_AGENT` when picked), as `{ id, name, image? }`; the plugin doesn't enumerate staff. Server: `auth.api.getFullOrganization`; browser-only apps: `authClient.organization.listMembers({ query: { organizationId, limit: 100 } })`, filtered with the roles' `authorize({ support: ["read"] })`. For staff notification links, pass `ticketId` from the route and update the route in `onTicketChange`.
    - `onNavigate` takes the app router (Next.js `(href) => router.push(href)`, TanStack Router `(href) => router.navigate({ href })`).
-   - Tailwind v4 skips `node_modules`: add `@source "<relative path>/node_modules/@byo-oss/support/dist";` to the CSS file that imports Tailwind.
+   - Tailwind v4 skips `node_modules`: add `@source "<relative path>/node_modules/@byo-oss/support/dist";` to the CSS file that imports Tailwind. In a monorepo, add `@byo-oss/support` as a direct dependency of the web app's package so this path and the `./react` import resolve.
 
    Done when a customer can open a ticket, an agent with a staff role sees it in the inbox, replies, and the customer sees the reply.
 
@@ -37,7 +37,7 @@ Work through these in order. Each step ends on a check; move on only when it hol
 
 ## Add-ons, only if asked for
 
-**Email replies.** Needs `@wraps.dev/email` for Wraps. Add `mailer: wrapsMailer({ from })` (from `@byo-oss/support/wraps`) and `email: { from, replyDomain, appUrl }` together, with `from` the same address; setting one without the other fails at boot. Route `ticketPath(id)` (default `/support/<id>`; set it if that could collide with the app's routes, such as a top-level `/:org` segment) to a page that renders `<SupportWidget ticketId={id} />`, so the link in mail opens that ticket. Rerun the migration (adds `supportDelivery`). Done when an agent reply produces a `sent` row in `supportDelivery` after the sweep runs.
+**Email replies.** Needs `@wraps.dev/email` for Wraps. Add `mailer: wrapsMailer({ from })` (from `@byo-oss/support/wraps`) and `email: { from, replyDomain, appUrl }` together, with `from` the same address; setting one without the other fails at boot. Route `ticketPath(id)` (default `/support/<id>`; set it if that could collide with the app's routes, such as a top-level `/:org` segment) to a page that renders `<SupportWidget variant="inline" ticketId={id} />`, so the link in mail opens that ticket. Rerun the migration (adds `supportDelivery`). Done when an agent reply produces a `sent` row in `supportDelivery` after the sweep runs.
 
 **Inbound email.** Needs `email`. Add `inbound: { source: rawRelay({ secret }) }` (Postmark, Mailgun, Cloudflare: POST the raw message with `Authorization: Bearer <secret>`) or `wrapsInbound({ key, bucket, region })` from `@byo-oss/support/wraps` (EventBridge `email.received`, header `X-Wraps-Inbound-Key`). Point the relay at `<auth base path>/support/inbound` and route every address at `replyDomain`, plus-addresses included, to it.
 - For `wrapsInbound` the role needs `s3:GetObject` on `bucket/*` **and** `s3:ListBucket` on the bucket. Without `ListBucket` a missing object is reported as `AccessDenied`, answered 502 and retried forever.

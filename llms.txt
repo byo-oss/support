@@ -33,10 +33,13 @@ export const authClient = createAuthClient({ plugins: [supportClient()] });
 
 // UI (client components)
 import { SupportInbox, SupportWidget } from "@byo-oss/support/react";
-<SupportWidget client={authClient} organizationId={orgId} onNavigate={(href) => router.push(href)} />   // customers; ticketId? opens that ticket's thread (email links: route ticketPath(id) to a page rendering <SupportWidget ticketId={id} />)
-<SupportInbox client={authClient} agents={[{ id, name, image? }]} onNavigate={(href) => router.push(href)} />   // staff; agents = staff org members for the assignee/@mention pickers
-// props on both: client, onNavigate, renderMessage(message, fallback), pollInterval (15000), labels, className and per-part classes (widget: listClassName threadClassName messageClassName composerClassName buttonClassName; inbox: queueClassName instead of listClassName)
-// Tailwind v4: @source "../node_modules/@byo-oss/support/dist";
+<SupportWidget client={authClient} organizationId={orgId} onNavigate={(href) => router.push(href)} />   // customers; a popover (launcher + panel extending left): put it at the right end of the header
+<SupportWidget client={authClient} variant="inline" ticketId={id} />   // a page of its own: in place, full width, no launcher, never closes. Email links: route ticketPath(id) here
+// widget: variant ("popover" | "inline"), ticketId? (opens that thread; new value opens it), defaultOpen?, open? + onOpenChange? (controlled popover; the app setting open=true with ticketId shows that ticket again, the launcher reopens where the user left off), badgePollInterval (60000, closed popover: list only, for the unread badge)
+<SupportInbox client={authClient} agents={[{ id, name, image? }]} ticketId={id ?? null} onTicketChange={(id) => navigate(id ? `/staff/support/${id}` : "/staff/support")} onNavigate={(href) => router.push(href)} />   // staff; ticketId opens a ticket (null closes), onTicketChange(id | null) reports user selection (row, Back, merge target, delete), never prop changes
+// agents = staff-org members whose role grants support:["read"] (what isAgent checks; others fail NOT_AN_AGENT). Server: auth.api.getFullOrganization({ headers, query: { organizationId } }). Browser: authClient.organization.listMembers({ query: { organizationId, limit: 100 } }) from a staff session; filter by roles[role].authorize({ support: ["read"] }) per comma-separated role (or organization.checkRolePermission); map to { id: m.userId, name: m.user.name, image: m.user.image }. One page (100 by default): page listMembers with offset
+// props on both: client, onNavigate, renderMessage(message, fallback), pollInterval (15000; widget: while open or inline), labels, className and per-part classes, all appending to the component's own classes (widget: listClassName threadClassName messageClassName composerClassName buttonClassName = launcher; inbox: queueClassName instead of listClassName, buttonClassName = every action button)
+// Tailwind v4: @source "../node_modules/@byo-oss/support/dist"; (monorepo: make @byo-oss/support a direct dependency of the web app package). Tokens: background foreground border ring accent accent-foreground muted muted-foreground primary primary-foreground popover popover-foreground destructive; destructive buttons are bg-destructive text-white
 
 // cron (every minute): REQUIRED for delayed replies, retries, auto-closing solved tickets and pruning stale uploads
 await auth.api.processSupportDeliveries({});   // server-only → { sent, skipped, retrying, failed, hasMore, closed, pruned }; call again while hasMore
@@ -180,7 +183,7 @@ DROP TABLE IF EXISTS "supportAttachment"; DROP TABLE IF EXISTS "supportDelivery"
 
 ## Notes
 
-- Not here yet: SLAs, automation rules, multi-brand, social channels, live chat (the UI polls every 15 s), AI replies, saved views, merging across requesters/orgs, anonymous widget visitors, apps without the organization plugin, translations (English labels; override with `labels`).
+- Not here yet: SLAs, automation rules, multi-brand, social channels, live chat (the UI polls: 15 s open, 60 s for the closed widget's badge), AI replies, saved views, merging across requesters/orgs, anonymous widget visitors, apps without the organization plugin, translations (English labels; override with `labels`).
 - Limits: listSupportTags and a ticket's tags read at most 10,000 tag rows; q is a simple contains on the subject (no body search); messages are plain text; email-only people can't see tickets in the app; tickets opened by mail have no organization.
 - Hooks (headless, from @byo-oss/support/react): useSupportTickets, useSupportTicket, useSupportQueue, useSupportAgentTicket, useSupportCannedReplies, useSupportUpload; poll every pollInterval (15000, paused while the tab is hidden). Labels: defaultLabels, defaultWidgetLabels, defaultInboxLabels.
 - Components use shadcn CSS variables; no UI runtime dependencies.

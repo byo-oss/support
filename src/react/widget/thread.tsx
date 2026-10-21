@@ -43,6 +43,8 @@ export type ThreadViewProps = {
   /** Called after something changed server-side, so the list can refresh. */
   onChanged: () => void;
   onBack: () => void;
+  /** Move focus to the heading on mount (off for an inline widget's first view). */
+  focusOnMount: boolean;
   className: string | undefined;
   messageClassName: string | undefined;
   composerClassName: string | undefined;
@@ -61,6 +63,7 @@ export function ThreadView({
   renderMessage,
   onChanged,
   onBack,
+  focusOnMount,
   className,
   messageClassName,
   composerClassName,
@@ -77,8 +80,9 @@ export function ThreadView({
   });
 
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusRef = useRef(focusOnMount);
   useEffect(() => {
-    headingRef.current?.focus();
+    if (focusRef.current) headingRef.current?.focus();
   }, []);
 
   // opening an unread ticket marks it seen (requesters only: `unread` is

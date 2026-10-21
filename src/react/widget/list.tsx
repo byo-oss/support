@@ -21,6 +21,8 @@ export type ListViewProps = {
   labels: WidgetLabels;
   onOpen: (id: string) => void;
   onNew: () => void;
+  /** Move focus to the heading on mount (off for an inline widget's first view). */
+  focusOnMount: boolean;
   className: string | undefined;
 };
 
@@ -29,11 +31,13 @@ export function ListView({
   labels,
   onOpen,
   onNew,
+  focusOnMount,
   className,
 }: ListViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusRef = useRef(focusOnMount);
   useEffect(() => {
-    headingRef.current?.focus();
+    if (focusRef.current) headingRef.current?.focus();
   }, []);
   const loading = tickets.isLoading && tickets.tickets.length === 0;
 
@@ -137,6 +141,8 @@ export type NewTicketViewProps = {
   organizationId: string | undefined;
   onBack: () => void;
   onCreated: (id: string) => void;
+  /** Move focus to the heading on mount. */
+  focusOnMount: boolean;
   className: string | undefined;
   composerClassName: string | undefined;
 };
@@ -147,6 +153,7 @@ export function NewTicketView({
   organizationId,
   onBack,
   onCreated,
+  focusOnMount,
   className,
   composerClassName,
 }: NewTicketViewProps) {
@@ -158,8 +165,9 @@ export function NewTicketView({
   const subjectId = useId();
   const bodyId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusRef = useRef(focusOnMount);
   useEffect(() => {
-    headingRef.current?.focus();
+    if (focusRef.current) headingRef.current?.focus();
   }, []);
 
   const valid = subject.trim().length > 0 && body.trim().length > 0;

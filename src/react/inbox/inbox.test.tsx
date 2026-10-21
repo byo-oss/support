@@ -9,6 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupportFetchClient } from "../hooks";
 import { defaultLabels, type SupportLabels } from "../labels";
@@ -491,7 +492,12 @@ describe("bulk actions", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    // destructive buttons use text-white on bg-destructive, as shadcn's do
+    const yes = screen.getByRole("button", { name: "Yes, delete" });
+    expect(yes.className).toContain("bg-destructive");
+    expect(yes.className).toContain("text-white");
+    expect(yes.className).not.toContain("destructive-foreground");
+    fireEvent.click(yes);
     await waitFor(() =>
       expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t1", "t3"] }),
     );
@@ -1465,6 +1471,107 @@ describe("labels", () => {
     // back to the queue
     fireEvent.click(screen.getByRole("button", { name: marker("back") }));
     expect(leaks()).toEqual([]);
+  });
+});
+
+describe("deep links (ticketId, onTicketChange)", () => {
+  it("opens the ticket from the ticketId prop", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = renderInbox({}, { ticketId: "t2", onTicketChange });
+    await screen.findByRole("log");
+    expect(
+      await screen.findByRole("region", { name: "Printer jam" }),
+    ).toBeTruthy();
+    expect(mocks.ticket).toHaveBeenCalledWith({ query: { id: "t2" } });
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
+  it("opens another ticket when the prop changes, and closes on undefined", async () => {
+    const onTicketChange = vi.fn();
+    const made = makeClient();
+    const { rerender } = render(
+      <SupportInbox
+        client={made.client}
+        agents={AGENTS}
+        pollInterval={0}
+        ticketId="t1"
+        onTicketChange={onTicketChange}
+      />,
+    );
+    await screen.findByRole("region", { name: "Login broken" });
+    rerender(
+      <SupportInbox
+        client={made.client}
+        agents={AGENTS}
+        pollInterval={0}
+        ticketId="t2"
+        onTicketChange={onTicketChange}
+      />,
+    );
+    await screen.findByRole("region", { name: "Printer jam" });
+    expect(made.mocks.ticket).toHaveBeenCalledWith({ query: { id: "t2" } });
+    expect(screen.queryByRole("region", { name: "Login broken" })).toBeNull();
+
+    rerender(
+      <SupportInbox
+        client={made.client}
+        agents={AGENTS}
+        pollInterval={0}
+        onTicketChange={onTicketChange}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("log")).toBeNull());
+    // prop-driven changes are the app's own; they are never echoed back
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
+  it("calls onTicketChange when a row is selected, and with null on Back", async () => {
+    const onTicketChange = vi.fn();
+    await openTicket({}, { onTicketChange });
+    expect(onTicketChange).toHaveBeenCalledTimes(1);
+    expect(onTicketChange).toHaveBeenLastCalledWith("t1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.queryByRole("log")).toBeNull());
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+    expect(onTicketChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("follows the app's URL round trip without echoing", async () => {
+    const made = makeClient();
+    const calls: (string | null)[] = [];
+    function App() {
+      const [id, setId] = useState<string | null>("t1");
+      return (
+        <SupportInbox
+          client={made.client}
+          agents={AGENTS}
+          pollInterval={0}
+          ticketId={id}
+          onTicketChange={(next) => {
+            calls.push(next);
+            setId(next);
+          }}
+        />
+      );
+    }
+    render(<App />);
+    await screen.findByRole("region", { name: "Login broken" });
+    fireEvent.click(screen.getByRole("button", { name: /Printer jam/ }));
+    await screen.findByRole("region", { name: "Printer jam" });
+    expect(calls).toEqual(["t2"]);
+  });
+
+  it("reports null when the open ticket is deleted", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket({}, { onTicketChange });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select ticket #1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t1"] }),
+    );
+    await waitFor(() => expect(onTicketChange).toHaveBeenLastCalledWith(null));
   });
 });
 

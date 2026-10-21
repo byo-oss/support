@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupportFetchClient, WireAgentMessage } from "../hooks";
 import { useSupportQueue } from "../hooks";
 import { defaultLabels, type SupportLabels } from "../labels";
@@ -18,10 +18,23 @@ export type SupportInboxProps = {
   onNavigate?: (href: string) => void;
   /** Render one message; `fallback` is the default rendering. */
   renderMessage?: (message: WireAgentMessage, fallback: ReactNode) => ReactNode;
-  /** Poll interval in ms. @default 15000 */
+  /**
+   * Opens this ticket's thread, for deep links (`/staff/support/:id`). A new
+   * value opens that ticket; `null` or `undefined` after a ticket closes the
+   * thread. Changes from this prop never call `onTicketChange`.
+   */
+  ticketId?: string | null;
+  /**
+   * Called when the user changes the open ticket (selecting a row, Back, a
+   * merge that moves to the target, deleting the open ticket) with its id,
+   * or `null` when no ticket is open. Sync your URL here.
+   */
+  onTicketChange?: (ticketId: string | null) => void;
+  /** Poll interval in ms. 0 disables polling. @default 15000 */
   pollInterval?: number;
   /** Shared keys (`SupportLabels`) plus this component's own. */
   labels?: Partial<SupportLabels & SupportInboxLabels>;
+  /** Added to the root's classes. Every class prop appends. */
   className?: string;
   queueClassName?: string;
   threadClassName?: string;
@@ -40,6 +53,9 @@ const defaultNavigate = (href: string) => window.location.assign(href);
  * update, merge and delete (attachment and merge UI hidden when their
  * `features` flag is false).
  *
+ * `ticketId` opens a ticket from your URL and `onTicketChange` reports the
+ * user's selection back, for deep links like `/staff/support/:id`.
+ *
  * Narrow screens show the queue or the thread, one at a time; from `md` up
  * they sit side by side. Enter writes a new line, Ctrl/Cmd+Enter sends.
  */
@@ -48,6 +64,8 @@ export function SupportInbox({
   agents,
   onNavigate,
   renderMessage,
+  ticketId,
+  onTicketChange,
   pollInterval,
   labels: labelOverrides,
   className,
@@ -88,7 +106,29 @@ export function SupportInbox({
     ...(pollInterval !== undefined ? { pollInterval } : {}),
   });
 
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(ticketId ?? null);
+  const openIdRef = useRef(openId);
+  openIdRef.current = openId;
+  const onTicketChangeRef = useRef(onTicketChange);
+  onTicketChangeRef.current = onTicketChange;
+  /** A selection the user made: tell the app, so it can sync its URL. */
+  const select = useCallback((id: string | null) => {
+    if (openIdRef.current === id) return;
+    openIdRef.current = id;
+    setOpenId(id);
+    onTicketChangeRef.current?.(id);
+  }, []);
+
+  // the prop opens its ticket when it changes (a deep link, or the app's
+  // router after onTicketChange); an app that never passes it keeps the
+  // inbox's own selection
+  const linked = useRef(ticketId ?? null);
+  useEffect(() => {
+    const next = ticketId ?? null;
+    if (linked.current === next) return;
+    linked.current = next;
+    setOpenId(next);
+  }, [ticketId]);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
 
   // the live region sits at the root: on narrow screens the queue is hidden
@@ -120,12 +160,12 @@ export function SupportInbox({
         search={search}
         onSearchChange={setSearch}
         selectedTicketId={openId}
-        onOpenTicket={setOpenId}
+        onOpenTicket={select}
         checked={checked}
         onCheckedChange={setChecked}
         onDeleted={(ids) => {
           // a deleted ticket must not stay on screen with a live composer
-          if (openId !== null && ids.includes(openId)) setOpenId(null);
+          if (openId !== null && ids.includes(openId)) select(null);
         }}
         buttonClassName={buttonClassName}
         className={cx(
@@ -145,9 +185,9 @@ export function SupportInbox({
           pollInterval={pollInterval}
           onNavigate={onNavigate ?? defaultNavigate}
           renderMessage={renderMessage}
-          onBack={() => setOpenId(null)}
-          onGone={() => setOpenId(null)}
-          onOpenTicket={setOpenId}
+          onBack={() => select(null)}
+          onGone={() => select(null)}
+          onOpenTicket={select}
           className={cx("flex-1", threadClassName)}
           messageClassName={messageClassName}
           composerClassName={composerClassName}
