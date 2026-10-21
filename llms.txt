@@ -1,0 +1,188 @@
+# @byo-oss/support
+
+Customer support as a better-auth plugin. Tickets, messages, internal notes, canned replies and attachments are rows in the app's own database (any better-auth adapter). Requesters are better-auth users, staff are members of one organization (`staffOrganizationId`), customers can share a ticket with their organization. A React widget (customers) and inbox (agents) sit on headless hooks. Email in and out, attachments and events are opt-in. Requires the better-auth organization plugin. Community plugin, not affiliated with better-auth.
+
+## Install & wire
+
+npm install @byo-oss/support   // optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
+
+// lib/access.ts: spread the statements and grant them to staff roles
+import { createAccessControl } from "better-auth/plugins/access";
+import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access";
+import { supportRoles, supportStatements } from "@byo-oss/support";
+export const ac = createAccessControl({ ...defaultStatements, ...supportStatements });
+export const roles = {
+  owner: ac.newRole({ ...ownerAc.statements, ...supportRoles.owner }),
+  admin: ac.newRole({ ...adminAc.statements, ...supportRoles.admin }),
+  member: ac.newRole({ ...memberAc.statements, ...supportRoles.member }),
+};
+// support actions: read (queue, any ticket), reply (replies, notes), update (status, priority, assignee, tags, bulk, merge), manage (canned replies), delete (delete tickets). supportRoles: owner/admin all, member read+reply+update. Permissions are checked, never role names.
+
+// server: lib/auth.ts. organization() MUST come before support(): tables are created in plugin order and supportTicket references organization.
+import { organization } from "better-auth/plugins/organization";
+import { support } from "@byo-oss/support";
+export const auth = betterAuth({
+  plugins: [organization({ ac, roles }), support({ staffOrganizationId: process.env.SUPPORT_STAFF_ORGANIZATION_ID })],
+});
+// Without organization(): boot throws ORGANIZATION_PLUGIN_REQUIRED. Without staffOrganizationId and authorize: one warning, every agent endpoint denies.
+// then: npx @better-auth/cli migrate  (supportTicket, supportCounter, supportTicketTag, supportMessage, supportCannedReply; + supportDelivery with mailer; + supportAttachment with attachments; rerun after enabling them)
+
+// client: lib/auth-client.ts
+import { supportClient } from "@byo-oss/support/client";
+export const authClient = createAuthClient({ plugins: [supportClient()] });
+
+// UI (client components)
+import { SupportInbox, SupportWidget } from "@byo-oss/support/react";
+<SupportWidget client={authClient} organizationId={orgId} onNavigate={(href) => router.push(href)} />   // customers
+<SupportInbox client={authClient} agents={[{ id, name, image? }]} onNavigate={(href) => router.push(href)} />   // staff; agents = staff org members for the assignee/@mention pickers
+// props on both: client, onNavigate, renderMessage(message, fallback), pollInterval (15000), labels, className and per-part classes (widget: listClassName threadClassName messageClassName composerClassName buttonClassName; inbox: queueClassName instead of listClassName)
+// Tailwind v4: @source "../node_modules/@byo-oss/support/dist";
+
+// cron (every minute): REQUIRED for delayed replies, retries, auto-closing solved tickets and pruning stale uploads
+await auth.api.processSupportDeliveries({});   // server-only → { sent, skipped, retrying, failed, hasMore, closed, pruned }; call again while hasMore
+// or with @byo-oss/core: await sweepAll(auth, { budgetMs: 20_000 })
+
+## Options (support(options), all optional)
+
+staffOrganizationId: string                     // the vendor's staff org; agents are its members whose role has support actions
+authorize({ session, headers, organizationId, permissions }) => boolean  // default: staff-org member + organization plugin hasPermission; organizationId is always staffOrganizationId
+acceptSession({ session, headers, kind: "customer"|"agent" }) => boolean // default: refuse impersonated sessions; false → 403 SESSION_NOT_ACCEPTED
+isAgent(userId) => boolean                      // who may be assigned or @mentioned; default: staff member with support:read; else NOT_AN_AGENT
+mailer: Mailer                                  // @byo-oss/mailer; needs email; adds supportDelivery
+email: { from, replyDomain, appUrl, ticketPath?: (id) => string /* default `/support/${id}` */, replyDelay?: number /* ms, 120000; 0 = at once */, requireVerifiedEmail?: boolean /* true */ }  // required with mailer and with inbound
+inbound: { source: SupportInboundSource, newTickets?: true, maxPerSenderPerHour?: 20, maxUnverifiedPerHour?: 100, maxBytes?: 26214400 }  // needs email
+attachments: { storage: SupportStorage, maxBytes?: 10485760, allowedTypes?: string[] }  // adds supportAttachment; HTML/SVG/XHTML refused at boot
+onEvent: (event: ByoEvent) => void | Promise<void>  // errors logged, never thrown
+organizationCleanup: true                       // clean up after /organization/delete, /remove-member, /leave
+autoCloseAfter: 604800000                       // ms; sweep closes solved tickets
+maxAttempts: 5, batchSize: 100, leaseMs: 300000, pageSize: 25 (1-50)
+schema                                          // rename tables and fields
+// boot errors ([@byo-oss/support] …): mailer without email or the reverse; inbound without email or source; attachments without storage; replyDelay < 0; replyDomain containing @; pageSize > 50; forbidden allowedTypes
+
+## Endpoints (auth.api key, method path, kind, input → returns). Server: auth.api.X({ headers, body | query }). Client: authClient.support.createTicket / myTickets / ticket / reply / updateMine / markSeen / agent.tickets / agent.ticket / agent.reply / agent.update / agent.merge / agent.delete / agent.markSeen / agent.tags / agent.canned (.save, .delete)
+
+// own rows (session; only the caller's tickets and org-shared ones where a member)
+createSupportTicket        POST /support/create-ticket   body { subject, body, organizationId?, visibility?: "private"|"organization" } → { ticket }
+listMySupportTickets       GET  /support/my-tickets      query { status?, organizationId?, q?, cursor? } → { tickets, nextCursor, features: { attachments } }
+getSupportTicket           GET  /support/ticket          query { id } → { ticket, messages, attachments }  (customer-visible only)
+replyToSupportTicket       POST /support/reply           body { ticketId, body, attachmentIds? } → { message }
+updateMySupportTicket      POST /support/update-mine     body { id, status?: "solved"|"open", visibility?, rating?: "good"|"bad" } → { ticket }  (requester only)
+markSupportTicketSeen      POST /support/mark-seen       body { id } → { ok: true }  (requester only)
+uploadSupportAttachment    POST /support/upload          query { ticketId, filename }; raw body; Content-Type = file type → { attachment } (unattached)
+getSupportAttachment       GET  /support/attachment      query { id } → the file
+// permission-gated (session + support permission in the staff org)
+listSupportTickets         GET  /support/agent/tickets   read    query { status?, assignee? (id|"me"|"none"), tag?, organizationId?, q?, cursor? } → { tickets, nextCursor, counts: { open, pending, unassigned, mine }, features: { attachments, merge } }
+getSupportTicketAsAgent    GET  /support/agent/ticket    read    query { id } → { ticket, messages (notes + events too), attachments }
+replyAsSupportAgent        POST /support/agent/reply     reply   body { ticketId, body, internal?, status?, mentions?, attachmentIds? } → { message }  (reply sets pending unless status given; internal = note)
+updateSupportTickets       POST /support/agent/update    update  body { ids (1-100), status?, priority? (or null), assigneeId? (or null), addTags?, removeTags? } → { updated }
+mergeSupportTickets        POST /support/agent/merge     update  body { sourceId, targetId } → { ticket } (target); same requester and org only
+deleteSupportTickets       POST /support/agent/delete    delete  body { ids (1-100) } → { deleted }
+markSupportTicketSeenAsAgent POST /support/agent/mark-seen read body { id } → { ok: true }
+listSupportTags            GET  /support/agent/tags      read    → string[] (sorted, deduped; reads at most 10,000 tag rows)
+listSupportCannedReplies   GET  /support/agent/canned    read    query { q? } → canned replies by title, ≤ 200
+saveSupportCannedReply     POST /support/agent/canned/save manage body { id?, title, body } → { cannedReply }
+deleteSupportCannedReply   POST /support/agent/canned/delete manage body { id } → { ok: true }
+uploadSupportAttachmentAsAgent POST /support/agent/upload reply  query { ticketId, filename, internal?: "true"|"false" }; raw body → { attachment } (unattached)
+getSupportAttachmentAsAgent GET /support/agent/attachment read   query { id } → the file
+// server-only
+processSupportDeliveries   (no path)  → { sent, skipped, retrying, failed, hasMore, closed, pruned }
+// credential-free, verified by its inbound source (like a webhook)
+receiveSupportEmail        POST /support/inbound  raw request → 202 { ok: true } (also for dropped and duplicate mail), or the source's reject status; 404 INBOUND_NOT_CONFIGURED without inbound; 502 when the source throws
+
+// limits: subject 1-200 (trimmed), body 1-50000, canned title 200 / body 50000, ids ≤ 100, attachmentIds ≤ 10, mentions ≤ 20, q ≤ 200, cursor ≤ 10000, tag 1-50 chars [a-z0-9_-]
+// lists: newest lastMessageAt first; q = "#123"/"123" exact number, else case-insensitive subject contains; cursor is opaque { at, ids }; every ticket-id endpoint follows mergedIntoId
+// statuses: open | pending | solved | closed. Agent reply → pending. Customer reply on pending/solved → open. Requester: solve (from open/pending), reopen (from solved). closed takes no replies (TICKET_CLOSED); mail to a closed ticket opens a follow-up ticket (followup_of event).
+// customers never receive: replyToken, assigneeId, agentSeenAt, mentions, notes, events other than status/merged, verified, emailMessageId, internal attachments
+
+## Error codes (SUPPORT_ERROR_CODES, response { code, message })
+
+ORGANIZATION_PLUGIN_REQUIRED (boot Error) | TICKET_NOT_FOUND 404 | NOT_ALLOWED 403 | SESSION_NOT_ACCEPTED 403 | NOT_A_MEMBER 403 | TICKET_CLOSED 400 | INVALID_STATUS_TRANSITION 400 | INBOUND_NOT_CONFIGURED 404 | MERGE_NOT_ALLOWED 400 | STORAGE_NOT_CONFIGURED 400 | ATTACHMENT_TOO_LARGE 413 | ATTACHMENT_TYPE_NOT_ALLOWED 415 | ATTACHMENT_NOT_USABLE 400 | ATTACHMENT_NOT_FOUND 404 | NOT_AN_AGENT 400 | INVALID_CURSOR 400 | INVALID_TAG 400 | CANNED_REPLY_NOT_FOUND 404. No session: 401.
+
+## Email replies (npm install @wraps.dev/email)
+
+import { wrapsMailer } from "@byo-oss/support/wraps";   // re-export of @byo-oss/mailer/wraps
+support({ mailer: wrapsMailer({ from: "Acme Support <support@acme.com>" }), email: { from: "Acme Support <support@acme.com>", replyDomain: "reply.acme.com", appUrl: "https://app.acme.com" } })
+// Agent replies (never notes) are queued in supportDelivery, due after replyDelay, skipped if the requester saw the ticket first. Subject "[#123] subject", Reply-To support+<token>@replyDomain, text + escaped html, link to appUrl + ticketPath(id); attachments are a link. Address resolved at send time: account email if verified (or any with requireVerifiedEmail: false), else requesterEmail; none → skipped (detail "no_address"). replyDelay 0 + advanced.backgroundTasks.handler sends inline; otherwise the sweep does.
+// A Mailer is { send(message) → { id, messageId? } }: throw to retry, throw PermanentMailError (@byo-oss/mailer) to fail at once. Test: testMailer from @byo-oss/mailer/testing.
+// at-least-once: atomic claim; backoff 1 min doubling to 1 h; failed after maxAttempts; a claim older than leaseMs is retried, so a crash after the provider accepted the mail (or a send that outlasts the lease) can send twice. delivery status pending|sending|sent|skipped|failed, detail = error or skip reason (seen, note, not_a_reply, no_address, deleted).
+
+## Inbound email (needs email; Node runtime: DKIM uses node:dns)
+
+import { rawRelay } from "@byo-oss/support";             // bearer secret; Postmark, Mailgun, Cloudflare
+import { wrapsInbound } from "@byo-oss/support/wraps";   // Wraps SES → S3 → EventBridge; needs @aws-sdk/client-s3
+support({ ..., inbound: { source: rawRelay({ secret: process.env.SUPPORT_INBOUND_SECRET!, maxBytes? }) } })
+support({ ..., inbound: { source: wrapsInbound({ key, bucket, region, client?, maxBytes? }) } })
+// POST <auth base path>/support/inbound. rawRelay: Content-Type message/rfc822, Authorization: Bearer <secret> (401 mismatch, 413 too large, 400 empty). wrapsInbound: header X-Wraps-Inbound-Key, EventBridge event (or its detail) with rawS3Key; NoSuchKey → 404 (no retry), other S3 error → 502 (retry), 413 too large, 400 bad body.
+// IAM for wrapsInbound: s3:GetObject on arn:aws:s3:::BUCKET/* AND s3:ListBucket on arn:aws:s3:::BUCKET. Without ListBucket a missing key is AccessDenied → 502 → retried forever.
+// Dropped (202, nothing stored): own from address or any address at replyDomain (loop), auto-replies, bounces, duplicate Message-ID, no sender, unparseable, too large, sender_cap (maxPerSenderPerHour, verified mail), unverified_cap, no_new_tickets.
+// verified = a passing DKIM signature aligned with the From domain (DMARC record not required). Threads by support+<token> recipient, then In-Reply-To/References; never by subject. Appends only verified mail from the requester (or, on an org-shared ticket, a verified member). Else a new private, org-less ticket. Only verified mail from a verified account is linked to that account; later verified sign-up links earlier verified tickets (linkSupportRequester).
+// A source is { receive(request) → { raw: Uint8Array } | { reject: status } } (throw → 502). Test: testSupportInboundSource(factory, { failing, fixtures: { accepted, raw, unauthenticated } }) from @byo-oss/support/testing.
+
+## Attachments (npm install @aws-sdk/client-s3)
+
+import { s3Storage } from "@byo-oss/support/s3";
+support({ attachments: { storage: s3Storage({ bucket, region /*, endpoint, forcePathStyle, credentials, client */ }), maxBytes: 10485760, allowedTypes: [...] } })
+// IAM: s3:PutObject, GetObject, DeleteObject, ListBucket. Keys: support/<organizationId or "_">/<attachmentId>. R2/MinIO via endpoint (+ forcePathStyle).
+// Upload = raw body (not multipart) with Content-Length (missing/over maxBytes → 413) and Content-Type in allowedTypes (415); returns an unattached attachment; pass its id in attachmentIds on the next reply/note (≤ 10; same ticket, uploaded by the caller, unattached, internal only on notes, else ATTACHMENT_NOT_USABLE). Unattached uploads are pruned after 24 h by the sweep. Served with Content-Disposition: attachment, nosniff, CSP sandbox, no-store; only png/jpeg/gif/webp/pdf keep their type.
+// SupportStorage = { put({ key, body, contentType }), get(key) → { body, contentType, size } | null, delete(key), deletePrefix(prefix) }; throw to fail. Test: testSupportStorage(factory, { failing }); memoryStorage() from @byo-oss/support/testing.
+
+## Lifecycle (server-only functions, not endpoints)
+
+// automatic after /organization/delete (org's tickets + blobs), /organization/remove-member and /organization/leave (unassigns the member's tickets if it is the staff org); organizationCleanup: false skips row cleanup (SQL still cascades) but blobs under support/<orgId>/ are always removed on org delete
+await deleteOrganizationData(auth, organizationId)        // → { tickets }; for deletes made any other way
+await deleteMemberData(auth, { userId, organizationId })  // → { unassigned }
+await deleteSupportRequesterData(auth, { email })         // → { tickets, messages }; erases an account-less person
+await linkSupportRequester(auth, userId)                  // → { tickets, messages }
+// all join a better-auth transaction (runWithTransaction). User delete: FK set null on SQL, a user.delete hook elsewhere; copies of their email are cleared.
+// with @byo-oss/core: sweepAll(auth), deleteOrganizationData(auth, orgId), deleteMemberData(auth, input) reach support through its `byo` hooks
+
+## Events → notifications
+
+import { createEventBus } from "@byo-oss/core";
+support({ onEvent: createEventBus([async (event): Promise<void> => { /* route */ }]) })
+// ByoEvent: { type, occurredAt, actorId, userId?, organizationId?, subject: { type: "supportTicket", id }, data }. In-process, best-effort, no bodies in data.
+// support.ticket.created      userId requester   { ticketId, number, channel, visibility }
+// support.ticket.status_changed userId requester { ticketId, from, to }
+// support.ticket.assigned     userId new assignee (absent if unassigned) { ticketId, from, to }
+// support.ticket.merged       userId requester   { ticketId, sourceId, targetId }
+// support.customer.replied    userId requester   { ticketId, messageId, channel }
+// support.agent.replied       userId requester   { ticketId, messageId, status }
+// support.note.added          no userId          { ticketId, messageId }
+// support.agent.mentioned     userId the agent (one event each) { ticketId, messageId, kind }
+// P2: staff ← created, customer.replied (auth.api.notify({ body: { organizationId: staffOrganizationId, roles, excludeUserIds: [actorId], type, title, href } })), assigned and mentioned (notify userId = event.userId); requester ← agent.replied (notify userId = event.userId). NEVER forward support.note.added to a customer.
+
+## Export
+
+import { exportSupportData } from "@byo-oss/support";
+await exportSupportData(auth, { organizationId?, cursor?, limit: 100 })  // limit 1-500 → { tickets, cannedReplies, cursor }; loop until cursor is null
+// tickets in number order (keyset on number, so a delete mid-export skips nothing); each ticket: row fields minus replyToken, userEmail, assigneeEmail, tags, messages (oldest first, notes and events, each with userEmail and deliveries), attachments (metadata incl. storageKey, userEmail); ISO dates. cannedReplies (with userEmail) on the first page of a whole export (no organizationId). supportCounter is not exported.
+
+## Schema (public contract; README lists every field)
+
+supportTicket: id, number (unique), subject, status, priority?, channel (web|email), userId? (→user, set null), requesterEmail?, requesterName?, organizationId? (→organization, cascade), visibility (private|organization), assigneeId? (→user, set null), rating? (good|bad), verified, mergedIntoId? (→supportTicket, set null), replyToken (unique), requesterSeenAt?, agentSeenAt?, lastMessageAt, solvedAt?, createdAt, updatedAt
+supportCounter: id, key (unique, "ticket"), value
+supportTicketTag: id, ticketId (→supportTicket, cascade), tag
+supportMessage: id, ticketId (→supportTicket, cascade), kind (reply|note|event), authorType (customer|agent|system), userId? (→user, set null), authorEmail?, authorName?, body, data? (json, events: { type: status|assignee|priority|merged|attachment_dropped|followup_of, from?, to? }), mentions? (json string[]), emailMessageId? (unique), channel, verified, createdAt
+supportCannedReply: id, title, body, userId? (→user, set null), createdAt, updatedAt
+supportDelivery (only with mailer): id, messageId (→supportMessage, cascade), ticketId (→supportTicket, cascade), status, scheduledFor, claimedAt?, attempts, detail?, providerId?, createdAt
+supportAttachment (only with attachments): id, ticketId (→supportTicket, cascade), messageId? (→supportMessage, cascade), userId? (→user, set null), internal, filename, contentType, size, storageKey, createdAt
+// MongoDB: create unique indexes on supportCounter.key, supportTicket.number, supportTicket.replyToken, supportMessage.emailMessageId.
+
+## Uninstall
+
+// remove support() (keep organization() if used), supportClient(), the components, the cron and the inbound route; then, children first:
+DROP TABLE IF EXISTS "supportAttachment"; DROP TABLE IF EXISTS "supportDelivery"; DROP TABLE IF EXISTS "supportMessage"; DROP TABLE IF EXISTS "supportTicketTag"; DROP TABLE IF EXISTS "supportCannedReply"; DROP TABLE IF EXISTS "supportTicket"; DROP TABLE IF EXISTS "supportCounter";
+// delete the support/ prefix in the attachment bucket. Nothing is added to user, organization or member.
+
+## Outgrowing this
+
+// signs: more than ~10 agents, SLAs or automation rules, phone/chat/social channels, CSAT reporting, multiple brands. Targets: Zendesk (ticket import; mapping table in the README), Plain, Front, Help Scout. Steps: run both, backfill with exportSupportData, cut over, uninstall.
+
+## Notes
+
+- Not here yet: SLAs, automation rules, multi-brand, social channels, live chat (the UI polls every 15 s), AI replies, saved views, merging across requesters/orgs, anonymous widget visitors, apps without the organization plugin, translations (English labels; override with `labels`).
+- Limits: listSupportTags and a ticket's tags read at most 10,000 tag rows; q is a simple contains on the subject (no body search); messages are plain text; email-only people can't see tickets in the app; tickets opened by mail have no organization.
+- Hooks (headless, from @byo-oss/support/react): useSupportTickets, useSupportTicket, useSupportQueue, useSupportAgentTicket, useSupportCannedReplies, useSupportUpload; poll every pollInterval (15000, paused while the tab is hidden). Labels: defaultLabels, defaultWidgetLabels, defaultInboxLabels.
+- Components use shadcn CSS variables; no UI runtime dependencies.
+- Don't query the plugin's tables from app code; use auth.api.*, the hooks and the exported functions.
+- Community plugin, not affiliated with better-auth.
