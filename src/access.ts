@@ -1,6 +1,10 @@
-// BYO_STUB: final owner N05. Signatures are final (contracts.md); bodies are neutral and fail closed.
 import type { DBTransactionAdapter, GenericEndpointContext } from "better-auth";
 import { APIError } from "better-auth/api";
+import {
+  hasPermission,
+  type OrganizationOptions,
+} from "better-auth/plugins/organization";
+import { findMember, listMemberships } from "./adapter";
 import { SUPPORT_ERROR_CODES } from "./error-codes";
 import type {
   ResolvedSupportOptions,
@@ -21,6 +25,42 @@ export type CustomerNeed = "read" | "reply" | "requester";
 /** How the caller relates to a ticket they can see. */
 export type CustomerRole = "requester" | "teammate";
 
+// the organization plugin's own options, so `hasPermission` sees the app's
+// `ac`, `roles`, `creatorRole` and dynamic access control
+function organizationOptions(
+  ctx: SupportEndpointContext,
+): OrganizationOptions | undefined {
+  const plugin = ctx.context.options.plugins?.find(
+    (p) => p.id === "organization",
+  ) as { options?: OrganizationOptions } | undefined;
+  return plugin?.options;
+}
+
+// a member of `organizationId` whose role grants `permissions`; never looks
+// at role names, and never at the session's active organization
+async function memberHasPermission(
+  ctx: SupportEndpointContext,
+  input: {
+    userId: string;
+    organizationId: string | undefined;
+    permissions: Record<string, string[]>;
+  },
+): Promise<boolean> {
+  const { userId, organizationId, permissions } = input;
+  if (!organizationId) return false;
+  const options = organizationOptions(ctx);
+  if (!options) return false;
+  const member = await findMember(ctx.context.adapter, {
+    userId,
+    organizationId,
+  });
+  if (!member) return false;
+  return hasPermission(
+    { role: member.role, options, permissions, organizationId },
+    ctx,
+  );
+}
+
 /**
  * The default `authorize`: looks up the caller's `member` row in
  * `input.organizationId` (the staff org) with `findMember`, and checks its
@@ -29,11 +69,15 @@ export type CustomerRole = "requester" | "teammate";
  * member row: false.
  */
 export async function defaultAuthorize(
-  _ctx: SupportEndpointContext,
+  ctx: SupportEndpointContext,
   _opts: ResolvedSupportOptions,
-  _input: SupportAuthorizeInput,
+  input: SupportAuthorizeInput,
 ): Promise<boolean> {
-  return false;
+  return memberHasPermission(ctx, {
+    userId: input.session.user.id,
+    organizationId: input.organizationId,
+    permissions: input.permissions,
+  });
 }
 
 /**
@@ -41,11 +85,15 @@ export async function defaultAuthorize(
  * role has `support: ["read"]`. False without a staff org.
  */
 export async function defaultIsAgent(
-  _ctx: SupportEndpointContext,
-  _opts: ResolvedSupportOptions,
-  _userId: string,
+  ctx: SupportEndpointContext,
+  opts: ResolvedSupportOptions,
+  userId: string,
 ): Promise<boolean> {
-  return false;
+  return memberHasPermission(ctx, {
+    userId,
+    organizationId: opts.staffOrganizationId,
+    permissions: { support: ["read"] },
+  });
 }
 
 /**
@@ -55,12 +103,20 @@ export async function defaultIsAgent(
  */
 export async function checkSession(
   ctx: SupportEndpointContext,
-  _opts: ResolvedSupportOptions,
-  _kind: "customer" | "agent",
+  opts: ResolvedSupportOptions,
+  kind: "customer" | "agent",
 ): Promise<SupportSession> {
   const session = ctx.context.session;
   if (!session) throw APIError.fromStatus("UNAUTHORIZED");
-  throw APIError.from("FORBIDDEN", SUPPORT_ERROR_CODES.SESSION_NOT_ACCEPTED);
+  const accepted = await opts.acceptSession({
+    session,
+    headers: ctx.headers ?? new Headers(),
+    kind,
+  });
+  if (!accepted) {
+    throw APIError.from("FORBIDDEN", SUPPORT_ERROR_CODES.SESSION_NOT_ACCEPTED);
+  }
+  return session;
 }
 
 /**
@@ -70,11 +126,26 @@ export async function checkSession(
  * Denied: 403 `NOT_ALLOWED`. Returns the session.
  */
 export async function requireAgent(
-  _ctx: SupportEndpointContext,
-  _opts: ResolvedSupportOptions,
-  _action: SupportAction | SupportAction[],
+  ctx: SupportEndpointContext,
+  opts: ResolvedSupportOptions,
+  action: SupportAction | SupportAction[],
 ): Promise<SupportSession> {
-  throw APIError.from("FORBIDDEN", SUPPORT_ERROR_CODES.NOT_ALLOWED);
+  const session = await checkSession(ctx, opts, "agent");
+  const input: SupportAuthorizeInput = {
+    session,
+    headers: ctx.headers ?? new Headers(),
+    // always the staff org, never a ticket's: a customer org's owner is not
+    // an agent on their own org's tickets
+    organizationId: opts.staffOrganizationId,
+    permissions: { support: Array.isArray(action) ? [...action] : [action] },
+  };
+  const allowed = opts.authorize
+    ? await opts.authorize(input)
+    : await defaultAuthorize(ctx, opts, input);
+  if (!allowed) {
+    throw APIError.from("FORBIDDEN", SUPPORT_ERROR_CODES.NOT_ALLOWED);
+  }
+  return session;
 }
 
 /**
@@ -86,22 +157,44 @@ export async function requireAgent(
  * `need: "requester"` and the caller is only a teammate: 403 `NOT_ALLOWED`.
  */
 export async function requireCustomer(
-  _ctx: SupportEndpointContext,
-  _opts: ResolvedSupportOptions,
-  _ticket: SupportTicketRow | null,
-  _need: CustomerNeed,
+  ctx: SupportEndpointContext,
+  opts: ResolvedSupportOptions,
+  ticket: SupportTicketRow | null,
+  need: CustomerNeed,
 ): Promise<{
   session: SupportSession;
   ticket: SupportTicketRow;
   role: CustomerRole;
 }> {
-  throw APIError.from("NOT_FOUND", SUPPORT_ERROR_CODES.TICKET_NOT_FOUND);
+  const session = await checkSession(ctx, opts, "customer");
+  const notFound = () =>
+    APIError.from("NOT_FOUND", SUPPORT_ERROR_CODES.TICKET_NOT_FOUND);
+  if (!ticket) throw notFound();
+  const userId = session.user.id;
+  // the requester keeps access after leaving the organization
+  if (ticket.userId && ticket.userId === userId) {
+    return { session, ticket, role: "requester" };
+  }
+  if (ticket.visibility !== "organization" || !ticket.organizationId) {
+    throw notFound();
+  }
+  const member = await findMember(ctx.context.adapter, {
+    userId,
+    organizationId: ticket.organizationId,
+  });
+  if (!member) throw notFound();
+  // a teammate may read and reply, nothing only the requester may do
+  if (need === "requester") {
+    throw APIError.from("FORBIDDEN", SUPPORT_ERROR_CODES.NOT_ALLOWED);
+  }
+  return { session, ticket, role: "teammate" };
 }
 
 /** The ids of the organizations `userId` is a member of (`listMemberships`, limit 1000). */
 export async function myOrganizationIds(
-  _adapter: DBTransactionAdapter,
-  _userId: string,
+  adapter: DBTransactionAdapter,
+  userId: string,
 ): Promise<string[]> {
-  return [];
+  const memberships = await listMemberships(adapter, userId);
+  return [...new Set(memberships.map((m) => m.organizationId))];
 }

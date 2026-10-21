@@ -1,4 +1,3 @@
-// BYO_STUB: final owner N05. Signatures and output types are final (contracts.md); bodies are neutral.
 import type { UserSummary } from "./adapter";
 import type {
   AuthorType,
@@ -106,6 +105,19 @@ export type AgentMessage = {
   createdAt: Date;
 };
 
+// D5: unread when the side's seen mark is missing or older than the last reply
+const seenBefore = (
+  seenAt: Date | null | undefined,
+  lastMessageAt: Date,
+): boolean =>
+  !seenAt || new Date(seenAt).getTime() < new Date(lastMessageAt).getTime();
+
+// customers see only status and merged events in the timeline
+const CUSTOMER_EVENT_TYPES: ReadonlySet<SupportEventData["type"]> = new Set([
+  "status",
+  "merged",
+]);
+
 /**
  * The customer view of a ticket. `viewerId` decides `unread`: true only when
  * the viewer is the requester and `requesterSeenAt` is null or older than
@@ -113,8 +125,9 @@ export type AgentMessage = {
  */
 export function toCustomerTicket(
   row: SupportTicketRow,
-  _viewerId: string,
+  viewerId: string,
 ): CustomerTicket {
+  const isRequester = !!row.userId && row.userId === viewerId;
   return {
     id: row.id,
     number: row.number,
@@ -129,7 +142,7 @@ export function toCustomerTicket(
     updatedAt: row.updatedAt,
     lastMessageAt: row.lastMessageAt,
     solvedAt: row.solvedAt ?? null,
-    unread: false,
+    unread: isRequester && seenBefore(row.requesterSeenAt, row.lastMessageAt),
   };
 }
 
@@ -139,10 +152,43 @@ export function toCustomerTicket(
  * author user ids to their summary (from `findUsersByIds`).
  */
 export function toCustomerMessage(
-  _row: SupportMessageRow,
-  _users: ReadonlyMap<string, UserSummary>,
+  row: SupportMessageRow,
+  users: ReadonlyMap<string, UserSummary>,
 ): CustomerMessage | null {
-  return null;
+  if (row.kind === "note") return null;
+  if (row.kind === "event") {
+    if (!row.data || !CUSTOMER_EVENT_TYPES.has(row.data.type)) return null;
+  }
+  return {
+    id: row.id,
+    ticketId: row.ticketId,
+    kind: row.kind,
+    authorType: row.authorType,
+    author: publicAuthor(row, users),
+    body: row.body,
+    data: row.kind === "event" && row.data ? eventData(row.data) : null,
+    createdAt: row.createdAt,
+  };
+}
+
+// only the event's own keys, so nothing else stored in `data` reaches customers
+function eventData(data: SupportEventData): SupportEventData {
+  const out: SupportEventData = { type: data.type };
+  if (data.from !== undefined) out.from = data.from;
+  if (data.to !== undefined) out.to = data.to;
+  return out;
+}
+
+// agents and teammates by name and avatar only; an account-less sender by the
+// name they gave (never their address); system rows have no author
+function publicAuthor(
+  row: SupportMessageRow,
+  users: ReadonlyMap<string, UserSummary>,
+): PublicAuthor | null {
+  if (row.authorType === "system") return null;
+  const user = row.userId ? users.get(row.userId) : undefined;
+  if (user) return { name: user.name, image: user.image };
+  return { name: row.authorName ?? null, image: null };
 }
 
 /**
@@ -153,6 +199,9 @@ export function toAgentTicket(
   row: SupportTicketRow,
   extras: { users: ReadonlyMap<string, UserSummary>; tags: string[] },
 ): AgentTicket {
+  const { users, tags } = extras;
+  const account = row.userId ? users.get(row.userId) : undefined;
+  const assignee = row.assigneeId ? users.get(row.assigneeId) : undefined;
   return {
     id: row.id,
     number: row.number,
@@ -161,11 +210,25 @@ export function toAgentTicket(
     priority: row.priority ?? null,
     channel: row.channel,
     userId: row.userId ?? null,
-    requester: { id: null, name: null, email: null, image: null },
+    requester: account
+      ? {
+          id: account.id,
+          name: account.name,
+          email: account.email,
+          image: account.image,
+        }
+      : {
+          id: row.userId ?? null,
+          name: row.requesterName ?? null,
+          email: row.requesterEmail ?? null,
+          image: null,
+        },
     organizationId: row.organizationId ?? null,
     visibility: row.visibility,
     assigneeId: row.assigneeId ?? null,
-    assignee: null,
+    assignee: assignee
+      ? { id: assignee.id, name: assignee.name, image: assignee.image }
+      : null,
     rating: row.rating ?? null,
     verified: row.verified,
     mergedIntoId: row.mergedIntoId ?? null,
@@ -175,26 +238,43 @@ export function toAgentTicket(
     solvedAt: row.solvedAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    tags: extras.tags,
-    unread: false,
+    tags: [...tags],
+    unread: seenBefore(row.agentSeenAt, row.lastMessageAt),
   };
 }
 
 /** The agent view of a message. `users` maps author user ids to their summary. */
 export function toAgentMessage(
   row: SupportMessageRow,
-  _users: ReadonlyMap<string, UserSummary>,
+  users: ReadonlyMap<string, UserSummary>,
 ): AgentMessage {
+  const user = row.userId ? users.get(row.userId) : undefined;
+  let author: AgentMessage["author"] = null;
+  if (user) {
+    author = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      image: user.image,
+    };
+  } else if (row.userId || row.authorEmail || row.authorName) {
+    author = {
+      id: row.userId ?? null,
+      name: row.authorName ?? null,
+      email: row.authorEmail ?? null,
+      image: null,
+    };
+  }
   return {
     id: row.id,
     ticketId: row.ticketId,
     kind: row.kind,
     authorType: row.authorType,
     userId: row.userId ?? null,
-    author: null,
+    author,
     body: row.body,
     data: row.data ?? null,
-    mentions: row.mentions ?? [],
+    mentions: [...(row.mentions ?? [])],
     channel: row.channel,
     verified: row.verified,
     emailMessageId: row.emailMessageId ?? null,
