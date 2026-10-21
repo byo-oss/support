@@ -273,8 +273,9 @@ async function attemptDelivery(
   if (!mailer || !email) return null;
 
   // The immediate path and a sweep can both hold this row. incrementOne is the
-  // adapter's compare-and-swap: the guard is part of the UPDATE itself, so
-  // exactly one caller gets it back.
+  // adapter's atomic claim (every first-party adapter guards it: a guarded
+  // UPDATE, a row lock or a single-process write), so exactly one caller gets
+  // it back.
   const claimed = await rt.adapter.incrementOne<SupportDeliveryRow>({
     model: "supportDelivery",
     where: [
