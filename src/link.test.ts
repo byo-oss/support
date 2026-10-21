@@ -241,6 +241,71 @@ describe("linking (PRD #11)", () => {
     error.mockRestore();
   });
 
+  it("doesn't rely on updateMany's returned count", async () => {
+    const { auth, rt } = await setup();
+    const { ticket } = await seedEmailTicket(auth);
+    const context = await getContext(auth);
+    // some drivers answer 0 even when rows changed
+    const zeroCount = {
+      ...context,
+      adapter: {
+        ...context.adapter,
+        updateMany: async (
+          args: Parameters<typeof context.adapter.updateMany>[0],
+        ) => {
+          await context.adapter.updateMany(args);
+          return 0;
+        },
+      },
+    } as typeof context;
+    const error = vi.spyOn(context.logger, "error");
+    await userLinkHooks(zeroCount, rt.opts).update.after({
+      id: "user_pat",
+      email: EMAIL,
+      emailVerified: true,
+      name: "Pat",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect((await ticketRow(rt, ticket.id)).userId).toBe("user_pat");
+    error.mockRestore();
+  });
+
+  it("stops with an error when an update changes nothing", async () => {
+    const { auth, rt } = await setup();
+    await seedEmailTicket(auth);
+    const context = await getContext(auth);
+    const updates: unknown[] = [];
+    const stuck = {
+      ...context,
+      adapter: {
+        ...context.adapter,
+        updateMany: async (args: unknown) => {
+          updates.push(args);
+          return 1;
+        },
+      },
+    } as typeof context;
+    const error = vi
+      .spyOn(context.logger, "error")
+      .mockImplementation(() => {});
+    await userLinkHooks(stuck, rt.opts).update.after({
+      id: "user_pat",
+      email: EMAIL,
+      emailVerified: true,
+      name: "Pat",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    expect(updates).toHaveLength(1);
+    expect(error).toHaveBeenCalledOnce();
+    expect(String(error.mock.calls[0]?.[1])).toContain(
+      "supportTicket rows to link were not updated",
+    );
+    error.mockRestore();
+  });
+
   describe("linkSupportRequester", () => {
     it("links a verified user's tickets and messages and reports counts", async () => {
       const { auth, rt } = await setup();

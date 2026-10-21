@@ -36,6 +36,9 @@ async function linkRows(
   },
 ): Promise<number> {
   let linked = 0;
+  // ids updated by the previous round; adapters don't report reliable update
+  // counts (kysely on PGlite answers 0), so progress is checked by re-reading
+  let previous = new Set<string>();
   for (;;) {
     const page = await rt.adapter.findMany<{ id: string }>({
       model,
@@ -48,19 +51,20 @@ async function linkRows(
     });
     if (page.length === 0) return linked;
     const ids = page.map((row) => row.id);
-    const updated = await rt.adapter.updateMany({
+    // a linked row loses the email, so it can't match again; one that does
+    // was not changed (row-level security, a trigger) and would loop forever
+    if (ids.some((id) => previous.has(id))) {
+      throw new Error(
+        `[@byo-oss/support] ${model} rows to link were not updated`,
+      );
+    }
+    await rt.adapter.updateMany({
       model,
       where: [{ field: "id", operator: "in", value: ids }],
       update: { userId, [emailField]: null, [nameField]: null },
     });
-    // an update that matched rows but changed none (row-level security, a
-    // trigger) would otherwise loop forever
-    if (!updated) {
-      throw new Error(
-        `[@byo-oss/support] found ${ids.length} ${model} rows to link but updated none`,
-      );
-    }
     linked += ids.length;
+    previous = new Set(ids);
   }
 }
 
