@@ -107,6 +107,37 @@ export type SupportInboxLabels = {
   mergeInto: (number: number) => string;
   confirmMerge: (source: number, target: number) => string;
   confirmMergeAction: string;
+  /** Empty queue while a filter or search is set. */
+  emptyFiltered: string;
+  clearFilters: string;
+  /** Composer: the send-and-solve button and the keyboard hint. */
+  sendAndSolve: string;
+  sendHint: string;
+  /** Shown over the composer while files are dragged over it. */
+  dropFiles: string;
+  /** Details panel: the requester card. */
+  requester: string;
+  verified: string;
+  channelWeb: string;
+  channelEmail: string;
+  /** Next to a message that arrived by email. */
+  viaEmail: string;
+  sharedWithOrganization: string;
+  opened: string;
+  lastActivity: string;
+  solvedAt: string;
+  rating: string;
+  ratedGood: string;
+  ratedBad: string;
+  /** The requester has seen the newest message. */
+  requesterSeenLatest: string;
+  /** The requester last looked at the ticket at `when` (a relative time), before the newest message. */
+  requesterSeenAt: (when: string) => string;
+  requesterNotSeen: string;
+  /** Heading of the status, priority and assignee controls. */
+  properties: string;
+  /** Alt text of an image attachment preview. */
+  imagePreview: (filename: string) => string;
 };
 
 export const defaultInboxLabels: SupportInboxLabels = {
@@ -202,4 +233,26 @@ export const defaultInboxLabels: SupportInboxLabels = {
   confirmMerge: (source, target) =>
     `Merge #${source} into #${target}? The messages move to #${target} and #${source} closes.`,
   confirmMergeAction: "Yes, merge",
+  emptyFiltered: "No tickets match these filters.",
+  clearFilters: "Clear filters",
+  sendAndSolve: "Send and solve",
+  sendHint: "Ctrl+Enter to send",
+  dropFiles: "Drop files to attach",
+  requester: "Requester",
+  verified: "Verified",
+  channelWeb: "Web",
+  channelEmail: "Email",
+  viaEmail: "via email",
+  sharedWithOrganization: "Shared with their organization",
+  opened: "Opened",
+  lastActivity: "Last activity",
+  solvedAt: "Solved",
+  rating: "Rating",
+  ratedGood: "Good",
+  ratedBad: "Bad",
+  requesterSeenLatest: "Has seen the latest message",
+  requesterSeenAt: (when) => `Last seen ${when}`,
+  requesterNotSeen: "Hasn't opened the ticket yet",
+  properties: "Properties",
+  imagePreview: (filename) => `Preview of ${filename}`,
 };

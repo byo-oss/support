@@ -1,9 +1,10 @@
-import type { KeyboardEvent } from "react";
+import type { DragEvent, KeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import type { TicketStatus } from "../../schema";
 import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, UseSupportAgentTicketResult } from "../hooks";
 import { useSupportUpload } from "../hooks";
+import { Avatar, Icon } from "../ui";
 import { CannedPicker } from "./canned";
 import {
   Button,
@@ -13,8 +14,13 @@ import {
   PICKER_PANEL,
   Popover,
 } from "./primitives";
-import { STATUSES } from "./queue";
 import type { InboxLabels, SupportAgent } from "./types";
+
+/** An unsent message, kept while the agent looks at other tickets. */
+export type ComposerDraft = { body: string; mode: "reply" | "note" };
+
+/** Drafts by ticket id, owned by the inbox so they outlive a thread pane. */
+export type ComposerDrafts = Map<string, ComposerDraft>;
 
 type ComposerProps = {
   client: SupportFetchClient;
@@ -27,6 +33,10 @@ type ComposerProps = {
   agents: SupportAgent[];
   /** `features.attachments` from the server. */
   attachments: boolean;
+  /** The ticket's status: Send and solve shows while it is open or pending. */
+  status: TicketStatus;
+  /** Where this ticket's unsent text lives between visits. */
+  drafts?: ComposerDrafts | undefined;
   labels: InboxLabels;
   className?: string | undefined;
   buttonClassName?: string | undefined;
@@ -35,7 +45,7 @@ type ComposerProps = {
 
 type Mode = "reply" | "note";
 
-/** Reply/note composer: canned replies, @mentions, attachments, status on send. */
+/** Reply/note composer: canned replies, @mentions, attachments, send and solve. */
 export function Composer({
   client,
   ticketId,
@@ -44,16 +54,28 @@ export function Composer({
   onFailedChange,
   agents,
   attachments,
+  status,
+  drafts,
   labels,
   className,
   buttonClassName,
   fieldClassName,
 }: ComposerProps) {
-  const [body, setBody] = useState("");
-  const [mode, setMode] = useState<Mode>("reply");
-  const [statusOnSend, setStatusOnSend] = useState<TicketStatus | "">("");
+  const [body, setBody] = useState(() => drafts?.get(ticketId)?.body ?? "");
+  const [mode, setMode] = useState<Mode>(
+    () => drafts?.get(ticketId)?.mode ?? "reply",
+  );
   const [mentions, setMentions] = useState<Map<string, string>>(new Map());
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState<false | "send" | "solve">(false);
+  const [dragging, setDragging] = useState(false);
+
+  // the draft outlives this pane: opening another ticket and coming back
+  // finds the text where it was
+  useEffect(() => {
+    if (!drafts) return;
+    if (body === "" && mode === "reply") drafts.delete(ticketId);
+    else drafts.set(ticketId, { body, mode });
+  }, [drafts, ticketId, body, mode]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const caretRef = useRef<number | null>(null);
@@ -102,9 +124,9 @@ export function Composer({
   const text = body.trim();
   const canSend = text !== "" && !sending && !uploads.isUploading;
 
-  const send = async () => {
+  const send = async (solve = false) => {
     if (!canSend) return;
-    setSending(true);
+    setSending(solve ? "solve" : "send");
     onFailedChange(false);
     // only agents whose @name is still in the text
     const mentionIds = [...mentions]
@@ -113,7 +135,7 @@ export function Composer({
     const ok = await reply({
       body: text,
       internal: mode === "note",
-      ...(statusOnSend ? { status: statusOnSend } : {}),
+      ...(solve ? { status: "solved" as const } : {}),
       ...(mentionIds.length > 0 ? { mentions: mentionIds } : {}),
       ...(uploads.uploads.length > 0
         ? { attachmentIds: uploads.uploads.map((upload) => upload.id) }
@@ -137,22 +159,59 @@ export function Composer({
     }
   };
 
+  const uploadAll = (files: File[]) => {
+    if (!attachments || files.length === 0) return;
+    // one at a time keeps the list in the order picked
+    void (async () => {
+      for (const file of files) await uploads.upload(file);
+    })();
+  };
+
+  const hasFiles = (event: DragEvent) =>
+    attachments && Array.from(event.dataTransfer.types).includes("Files");
+
   const note = mode === "note";
+  const canSolve = !note && (status === "open" || status === "pending");
   return (
-    // not a <form>: Enter in a picker's search box must not send the message
+    // not a <form>: Enter in a picker's search box must not send the message.
+    // biome-ignore lint/a11y/noStaticElementInteractions: dropping files is a shortcut for the Attach button
     <div
       className={cx(
-        "flex flex-col gap-2 border-t border-border bg-background p-3",
+        "relative flex shrink-0 flex-col gap-2 border-t border-border bg-background p-3",
         className,
       )}
+      onDragOver={(event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        setDragging(false);
+        uploadAll(Array.from(event.dataTransfer.files));
+      }}
     >
-      <fieldset className="flex min-w-0 flex-wrap items-center gap-2 border-0 p-0">
+      {dragging ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary bg-background/90 text-sm font-medium"
+        >
+          <Icon name="paperclip" />
+          {labels.dropFiles}
+        </div>
+      ) : null}
+      <fieldset className="inline-flex w-fit min-w-0 items-center gap-0.5 rounded-lg border-0 bg-muted p-0.5">
         <legend className="sr-only">{labels.modeLabel}</legend>
         {(["reply", "note"] as const).map((value) => (
           <label
             key={value}
             className={cx(
-              "inline-flex cursor-pointer items-center rounded-md border border-border px-2.5 py-1 text-sm has-[:checked]:bg-primary has-[:checked]:text-primary-foreground has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
+              "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1 text-sm text-muted-foreground has-[:checked]:bg-background has-[:checked]:text-foreground has-[:checked]:shadow-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
               TOUCH_TARGET,
               buttonClassName,
             )}
@@ -165,6 +224,10 @@ export function Composer({
               onChange={() => changeMode(value)}
               className="sr-only"
             />
+            <Icon
+              name={value === "reply" ? "message" : "lock"}
+              className="size-3.5 shrink-0"
+            />
             {value === "reply" ? labels.reply : labels.internalNote}
           </label>
         ))}
@@ -175,13 +238,20 @@ export function Composer({
         value={body}
         onChange={(event) => setBody(event.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files);
+          if (!attachments || files.length === 0) return;
+          event.preventDefault();
+          uploadAll(files);
+        }}
         aria-label={labels.composerLabel}
         placeholder={labels.message}
         rows={4}
         className={fieldClass(
           fieldClassName,
-          "w-full resize-y",
-          note && "border-dashed bg-accent/40",
+          "min-h-24 w-full resize-y",
+          note &&
+            "border-dashed border-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10",
         )}
       />
 
@@ -190,8 +260,12 @@ export function Composer({
           {uploads.uploads.map((upload) => (
             <li
               key={upload.id}
-              className="flex items-center gap-1 rounded bg-muted px-2 py-1 text-xs"
+              className="flex items-center gap-1 rounded-md border border-border bg-muted px-2 py-1 text-xs"
             >
+              <Icon
+                name="file"
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
               <span className="max-w-40 truncate">{upload.filename}</span>
               <span className="text-muted-foreground">
                 {labels.fileSize(upload.size)}
@@ -236,8 +310,14 @@ export function Composer({
           onInsert={(value) => insert(value, false)}
         />
         <Popover
-          trigger={labels.mention}
+          trigger={
+            <>
+              <Icon name="at" />
+              <span className="sr-only">{labels.mention}</span>
+            </>
+          }
           label={labels.mention}
+          title={labels.mention}
           buttonClassName={buttonClassName}
           placement="above-start"
           anchorToParent
@@ -257,10 +337,16 @@ export function Composer({
                       close();
                     }}
                     className={cx(
-                      "w-full rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       TOUCH_TARGET,
                     )}
                   >
+                    <Avatar
+                      name={agent.name}
+                      image={agent.image}
+                      size="xs"
+                      tone="primary"
+                    />
                     {agent.name}
                   </button>
                 </li>
@@ -272,9 +358,11 @@ export function Composer({
           <>
             <Button
               extra={buttonClassName}
+              title={labels.attach}
               onClick={() => fileRef.current?.click()}
             >
-              {labels.attach}
+              <Icon name="paperclip" />
+              <span className="sr-only">{labels.attach}</span>
             </Button>
             <input
               ref={fileRef}
@@ -285,38 +373,35 @@ export function Composer({
               onChange={(event) => {
                 const files = Array.from(event.target.files ?? []);
                 event.target.value = "";
-                // one at a time keeps the list in the order picked
-                void (async () => {
-                  for (const file of files) await uploads.upload(file);
-                })();
+                uploadAll(files);
               }}
             />
           </>
         ) : null}
-        <select
-          aria-label={labels.statusOnSend}
-          value={statusOnSend}
-          onChange={(event) =>
-            setStatusOnSend(event.target.value as TicketStatus | "")
-          }
-          className={fieldClass(fieldClassName)}
-        >
-          <option value="">{labels.statusOnSendDefault}</option>
-          {STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {labels.status[status]}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => void send()}
-          disabled={!canSend}
-          aria-keyshortcuts="Control+Enter Meta+Enter"
-          className={buttonClass("primary", buttonClassName, "ml-auto")}
-        >
-          {sending ? labels.sending : labels.send}
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {canSolve ? (
+            <button
+              type="button"
+              onClick={() => void send(true)}
+              disabled={!canSend}
+              className={buttonClass("default", buttonClassName)}
+            >
+              <Icon name="check" />
+              {sending === "solve" ? labels.sending : labels.sendAndSolve}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={!canSend}
+            aria-keyshortcuts="Control+Enter Meta+Enter"
+            title={labels.sendHint}
+            className={buttonClass("primary", buttonClassName)}
+          >
+            <Icon name="send" className="size-3.5 shrink-0" />
+            {sending === "send" ? labels.sending : labels.send}
+          </button>
+        </div>
       </div>
     </div>
   );

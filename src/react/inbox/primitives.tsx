@@ -124,6 +124,8 @@ type PopoverProps = {
   trigger: ReactNode;
   /** Accessible name of the panel (and of the trigger when it has no text). */
   label: string;
+  /** Tooltip of the trigger, for an icon-only one. */
+  title?: string | undefined;
   /** The app's `buttonClassName`. */
   buttonClassName?: string | undefined;
   /** Classes of the trigger itself. */
@@ -150,6 +152,7 @@ type PopoverProps = {
 export function Popover({
   trigger,
   label,
+  title,
   buttonClassName,
   triggerClassName,
   panelClassName,
@@ -189,6 +192,7 @@ export function Popover({
       <button
         ref={triggerRef}
         type="button"
+        title={title}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}

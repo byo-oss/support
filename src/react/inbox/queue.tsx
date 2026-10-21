@@ -3,14 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
 import { TOUCH_TARGET } from "../classes";
 import type { UseSupportQueueResult, WireAgentTicket } from "../hooks";
-import {
-  Button,
-  buttonClass,
-  Confirm,
-  cx,
-  fieldClass,
-  toDate,
-} from "./primitives";
+import { Avatar, Icon, PriorityBadge, StatusBadge, TagPill, Time } from "../ui";
+import { Button, buttonClass, Confirm, cx, fieldClass } from "./primitives";
 import type { InboxLabels, SupportAgent } from "./types";
 
 export const STATUSES = ["open", "pending", "solved", "closed"] as const;
@@ -114,16 +108,22 @@ export function QueuePane({
       aria-pressed={active}
       onClick={apply}
       className={cx(
-        "rounded-full border border-border px-2 py-0.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         TOUCH_TARGET,
         active
-          ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:text-foreground",
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       {text}
     </button>
   );
+
+  const filtered =
+    filters.status !== "" ||
+    filters.assignee !== "" ||
+    filters.tag !== "" ||
+    search.trim() !== "";
 
   const bulk = (input: Parameters<UseSupportQueueResult["update"]>[1]) =>
     void queue.update(checkedIds, input);
@@ -138,7 +138,13 @@ export function QueuePane({
       )}
     >
       <div className="flex flex-col gap-2 border-b border-border p-3">
-        <h2 className="text-sm font-semibold">{labels.queue}</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Icon
+            name="inbox"
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+          {labels.queue}
+        </h2>
         <div className="flex flex-wrap gap-1.5">
           {chip(labels.countOpen(counts.open), filters.status === "open", () =>
             onFiltersChange({
@@ -171,14 +177,20 @@ export function QueuePane({
             }),
           )}
         </div>
-        <input
-          type="search"
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-          aria-label={labels.search}
-          placeholder={labels.search}
-          className={fieldClass(fieldClassName, "w-full")}
-        />
+        <div className="relative">
+          <Icon
+            name="search"
+            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            aria-label={labels.search}
+            placeholder={labels.search}
+            className={fieldClass(fieldClassName, "w-full pl-8")}
+          />
+        </div>
         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
           <select
             aria-label={labels.filterStatus}
@@ -405,10 +417,45 @@ export function QueuePane({
             <span>{labels.selectAll}</span>
           </label>
         ) : null}
-        {tickets.length === 0 ? (
-          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-            {queue.isLoading ? labels.loading : labels.empty}
-          </p>
+        {tickets.length === 0 && queue.isLoading ? (
+          <div>
+            <p className="sr-only">{labels.loading}</p>
+            <ul aria-hidden="true" className="divide-y divide-border">
+              {[0, 1, 2, 3, 4].map((row) => (
+                <li key={row} className="flex gap-3 px-3 py-3">
+                  <span className="size-7 shrink-0 animate-pulse rounded-full bg-muted motion-reduce:animate-none" />
+                  <span className="flex flex-1 flex-col gap-2">
+                    <span className="h-3 w-3/4 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+                    <span className="h-2.5 w-1/2 animate-pulse rounded bg-muted motion-reduce:animate-none" />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : tickets.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
+            <span className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Icon name="inbox" className="size-5" />
+            </span>
+            {filtered ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {labels.emptyFiltered}
+                </p>
+                <Button
+                  extra={buttonClassName}
+                  onClick={() => {
+                    onFiltersChange({ status: "", assignee: "", tag: "" });
+                    onSearchChange("");
+                  }}
+                >
+                  {labels.clearFilters}
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">{labels.empty}</p>
+            )}
+          </div>
         ) : (
           <ul ref={listRef} className="divide-y divide-border">
             {tickets.map((ticket) => (
@@ -463,18 +510,24 @@ function QueueRow({
 }) {
   const requester =
     ticket.requester.name ?? ticket.requester.email ?? labels.unknownSender;
+  const loud = ticket.priority === "high" || ticket.priority === "urgent";
   return (
     <li
       className={cx(
-        "flex items-start gap-2 px-3 py-2",
+        "relative flex items-start gap-2 py-2.5 pl-3 pr-3",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
       )}
     >
+      {active ? (
+        <span
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 w-0.5 bg-primary"
+        />
+      ) : null}
       {/* the label widens the checkbox's hit area on a touch screen */}
-      <label className="flex shrink-0 cursor-pointer justify-center pointer-coarse:-my-2 pointer-coarse:-ml-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">
+      <label className="flex shrink-0 cursor-pointer justify-center pt-1.5 pointer-coarse:-my-2 pointer-coarse:-ml-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:pt-0">
         <input
           type="checkbox"
-          className="mt-1 pointer-coarse:mt-0"
           aria-label={labels.selectTicket(ticket.number)}
           checked={checked}
           onChange={(event) => onToggle(event.target.checked)}
@@ -486,50 +539,82 @@ function QueueRow({
         aria-current={active ? "true" : undefined}
         onClick={onOpen}
         className={cx(
-          "min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "flex min-w-0 flex-1 gap-2.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           TOUCH_TARGET,
         )}
       >
-        <span className="flex items-center gap-1.5">
-          {ticket.unread ? (
+        <Avatar
+          name={ticket.requester.name ?? ticket.requester.email}
+          image={ticket.requester.image}
+        />
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex items-baseline gap-2">
             <span
-              aria-hidden
-              className="size-2 shrink-0 rounded-full bg-primary"
+              className={cx(
+                "min-w-0 flex-1 truncate text-sm",
+                ticket.unread ? "font-semibold" : "font-medium",
+              )}
+            >
+              {ticket.unread ? (
+                <span
+                  aria-hidden
+                  className="mb-px mr-1.5 inline-block size-2 rounded-full bg-primary align-middle"
+                />
+              ) : null}
+              {ticket.subject}
+            </span>
+            <Time
+              value={ticket.lastMessageAt}
+              labels={labels}
+              className={cx(
+                "shrink-0 text-[11px] tabular-nums",
+                ticket.unread
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground",
+              )}
             />
-          ) : null}
-          <span className="shrink-0 text-xs text-muted-foreground">
-            {labels.ticketNumber(ticket.number)}
           </span>
-          <span
-            className={cx(
-              "truncate text-sm",
-              ticket.unread ? "font-semibold" : "font-medium",
-            )}
-          >
-            {ticket.subject}
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="shrink-0 tabular-nums">
+              {labels.ticketNumber(ticket.number)}
+            </span>
+            <span aria-hidden>·</span>
+            <span className="truncate">{requester}</span>
+            {ticket.channel === "email" ? (
+              <Icon name="mail" className="size-3 shrink-0" />
+            ) : null}
           </span>
-        </span>
-        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-          <span className="truncate">{requester}</span>
-          <span>{labels.status[ticket.status]}</span>
-          {ticket.priority ? (
-            <span>{labels.priority[ticket.priority]}</span>
-          ) : null}
-          {assignee ? <span>{assignee}</span> : null}
-          <span>{labels.relativeTime(toDate(ticket.lastMessageAt))}</span>
-        </span>
-        {ticket.tags.length > 0 ? (
-          <span className="mt-1 flex flex-wrap gap-1">
-            {ticket.tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-              >
-                {tag}
+          <span className="flex flex-wrap items-center gap-1">
+            <StatusBadge
+              status={ticket.status}
+              label={labels.status[ticket.status]}
+            />
+            {ticket.priority && loud ? (
+              <PriorityBadge
+                priority={ticket.priority}
+                label={labels.priority[ticket.priority]}
+              />
+            ) : ticket.priority ? (
+              <span className="sr-only">
+                {labels.priority[ticket.priority]}
               </span>
+            ) : null}
+            {assignee ? (
+              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+                <Avatar
+                  name={assignee}
+                  image={ticket.assignee?.image}
+                  size="xs"
+                  tone="primary"
+                />
+                <span className="truncate">{assignee}</span>
+              </span>
+            ) : null}
+            {ticket.tags.map((tag) => (
+              <TagPill key={tag}>{tag}</TagPill>
             ))}
           </span>
-        ) : null}
+        </span>
       </button>
     </li>
   );

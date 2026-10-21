@@ -9,10 +9,19 @@ import type {
   WireAgentMessage,
   WireAgentTicket,
 } from "../hooks";
-import { useSupportAgentTicket } from "../hooks";
-import { Composer } from "./composer";
+import { downloadAttachment, useSupportAgentTicket } from "../hooks";
+import {
+  Avatar,
+  canPreview,
+  Icon,
+  ImagePreview,
+  PriorityBadge,
+  StatusBadge,
+  Time,
+} from "../ui";
+import { Composer, type ComposerDrafts } from "./composer";
 import { DetailsPanel } from "./details";
-import { Button, cx, toDate } from "./primitives";
+import { Button, cx } from "./primitives";
 import type { InboxLabels, SupportAgent } from "./types";
 
 type ThreadPaneProps = {
@@ -47,6 +56,8 @@ type ThreadPaneProps = {
    * bulk delete of the shown ticket from one of another.
    */
   onResolved: (openId: string, id: string) => void;
+  /** Unsent text by ticket, kept by the inbox across thread panes. */
+  drafts?: ComposerDrafts | undefined;
   className?: string | undefined;
   messageClassName?: string | undefined;
   composerClassName?: string | undefined;
@@ -68,6 +79,7 @@ export function ThreadPane({
   onGone,
   onMerged,
   onResolved,
+  drafts,
   className,
   messageClassName,
   composerClassName,
@@ -147,6 +159,11 @@ export function ThreadPane({
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  // a preview that fails stays a placeholder: it must not raise the
+  // thread's error banner (the file chip under it still downloads)
+  const previewAttachment = (id: string) =>
+    downloadAttachment(client, "/support/agent/attachment", id, () => {});
+
   const agentName = (id: string | null | undefined) =>
     id ? (agents.find((agent) => agent.id === id)?.name ?? null) : null;
 
@@ -210,17 +227,21 @@ export function ThreadPane({
     );
 
   const renderRow = (message: WireAgentMessage): ReactNode => {
-    const when = labels.relativeTime(toDate(message.createdAt));
     let fallback: ReactNode;
     if (message.kind === "event") {
       fallback = (
         <p
           className={cx(
-            "text-center text-xs text-muted-foreground",
+            "flex items-center gap-3 py-1 text-center text-xs text-muted-foreground",
             messageClassName,
           )}
         >
-          {textFor(message)} · {when}
+          <span aria-hidden="true" className="h-px flex-1 bg-border" />
+          <span className="max-w-[80%]">
+            {textFor(message)} ·{" "}
+            <Time value={message.createdAt} labels={labels} />
+          </span>
+          <span aria-hidden="true" className="h-px flex-1 bg-border" />
         </p>
       );
     } else {
@@ -233,62 +254,108 @@ export function ThreadPane({
           ? labels.system
           : labels.unknownSender);
       const files = attachmentsOn ? (byMessage.get(message.id) ?? []) : [];
+      const images = files.filter(canPreview);
       fallback = (
         <article
           className={cx(
-            "flex max-w-[90%] flex-col gap-1 rounded-lg border px-3 py-2 text-sm",
-            note
-              ? "self-end border-dashed border-border bg-accent/60 text-accent-foreground"
-              : fromCustomer
-                ? "self-start border-border bg-muted text-foreground"
-                : "self-end border-transparent bg-primary/10 text-foreground",
+            "flex max-w-[92%] gap-2 sm:max-w-[85%]",
+            fromCustomer ? "self-start" : "flex-row-reverse self-end",
             messageClassName,
           )}
         >
-          <header className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">{name}</span>
-            {note ? (
-              <span className="rounded bg-background px-1.5 py-0.5">
-                {labels.noteBadge}
-              </span>
+          <Avatar
+            name={name}
+            image={message.author?.image}
+            tone={fromCustomer ? "muted" : "primary"}
+          />
+          <div
+            className={cx(
+              "flex min-w-0 flex-col gap-1",
+              fromCustomer ? "items-start" : "items-end",
+            )}
+          >
+            <header className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{name}</span>
+              {note ? (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-300">
+                  <Icon name="lock" className="size-3 shrink-0" />
+                  {labels.noteBadge}
+                </span>
+              ) : null}
+              {!message.verified && fromCustomer ? (
+                <span className="inline-flex items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                  <Icon name="alert" className="size-3 shrink-0" />
+                  {labels.unverifiedBadge}
+                </span>
+              ) : null}
+              {message.channel === "email" ? (
+                <span className="inline-flex items-center gap-1">
+                  <Icon name="mail" className="size-3 shrink-0" />
+                  {labels.viaEmail}
+                </span>
+              ) : null}
+              <Time value={message.createdAt} labels={labels} />
+            </header>
+            <div
+              className={cx(
+                "w-fit max-w-full rounded-2xl px-3.5 py-2 text-sm leading-relaxed",
+                note
+                  ? "rounded-tr-sm border border-dashed border-amber-500/60 bg-amber-500/10 text-foreground"
+                  : fromCustomer
+                    ? "rounded-tl-sm bg-muted text-foreground"
+                    : "rounded-tr-sm bg-primary text-primary-foreground",
+              )}
+            >
+              <p className="whitespace-pre-wrap break-words">
+                {renderBody(message.body)}
+              </p>
+            </div>
+            {images.length > 0 ? (
+              <ul className="flex flex-wrap gap-1.5">
+                {images.map((file) => (
+                  <li key={file.id}>
+                    <ImagePreview
+                      id={file.id}
+                      load={previewAttachment}
+                      alt={labels.imagePreview(file.filename)}
+                      onOpen={() => void openAttachment(file)}
+                    />
+                  </li>
+                ))}
+              </ul>
             ) : null}
-            {!message.verified && fromCustomer ? (
-              <span className="rounded bg-background px-1.5 py-0.5">
-                {labels.unverifiedBadge}
-              </span>
-            ) : null}
-            <span>{when}</span>
-          </header>
-          <p className="whitespace-pre-wrap break-words">
-            {renderBody(message.body)}
-          </p>
-          {files.length > 0 ? (
-            <ul className="flex flex-wrap gap-1.5">
-              {files.map((file) => (
-                <li key={file.id}>
-                  <button
-                    type="button"
-                    aria-label={labels.openAttachment(file.filename)}
-                    onClick={() => void openAttachment(file)}
-                    className={cx(
-                      "flex max-w-full items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      TOUCH_TARGET,
-                    )}
-                  >
-                    <span className="truncate">{file.filename}</span>
-                    <span className="shrink-0 text-muted-foreground">
-                      {labels.fileSize(file.size)}
-                    </span>
-                    {file.internal ? (
-                      <span className="shrink-0 rounded bg-muted px-1">
-                        {labels.internalBadge}
+            {files.length > 0 ? (
+              <ul className="flex flex-wrap gap-1.5">
+                {files.map((file) => (
+                  <li key={file.id}>
+                    <button
+                      type="button"
+                      aria-label={labels.openAttachment(file.filename)}
+                      onClick={() => void openAttachment(file)}
+                      className={cx(
+                        "flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        TOUCH_TARGET,
+                      )}
+                    >
+                      <Icon
+                        name="paperclip"
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                      />
+                      <span className="truncate">{file.filename}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {labels.fileSize(file.size)}
                       </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
+                      {file.internal ? (
+                        <span className="shrink-0 rounded bg-muted px-1">
+                          {labels.internalBadge}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
         </article>
       );
     }
@@ -308,26 +375,48 @@ export function ThreadPane({
       )}
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex items-start gap-2 border-b border-border p-3">
+        <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <Button
             extra={buttonClassName}
             className="md:hidden"
             onClick={onBack}
           >
+            <Icon name="back" />
             {labels.back}
           </Button>
-          <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
             {ticket ? (
               <>
-                <h2 className="truncate text-sm font-semibold">
-                  <span className="mr-1 font-normal text-muted-foreground">
-                    {labels.ticketNumber(ticket.number)}
-                  </span>
-                  {ticket.subject}
-                </h2>
-                <p className="truncate text-xs text-muted-foreground">
-                  {requester} · {labels.status[ticket.status]}
-                </p>
+                <span className="hidden sm:inline-flex">
+                  <Avatar
+                    name={ticket.requester.name ?? ticket.requester.email}
+                    image={ticket.requester.image}
+                    size="md"
+                  />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate text-sm font-semibold sm:text-base">
+                    <span className="mr-1.5 font-normal text-muted-foreground">
+                      {labels.ticketNumber(ticket.number)}
+                    </span>
+                    {ticket.subject}
+                  </h2>
+                  <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="truncate">{requester}</span>
+                    <span aria-hidden>·</span>
+                    <StatusBadge
+                      status={ticket.status}
+                      label={labels.status[ticket.status]}
+                    />
+                    {ticket.priority === "high" ||
+                    ticket.priority === "urgent" ? (
+                      <PriorityBadge
+                        priority={ticket.priority}
+                        label={labels.priority[ticket.priority]}
+                      />
+                    ) : null}
+                  </p>
+                </div>
               </>
             ) : null}
           </div>
@@ -337,6 +426,7 @@ export function ThreadPane({
             aria-expanded={detailsOpen}
             onClick={() => setDetailsOpen((value) => !value)}
           >
+            <Icon name="panel" />
             {labels.details}
           </Button>
         </header>
@@ -356,7 +446,7 @@ export function ThreadPane({
               ref={logRef}
               role="log"
               aria-label={ticket.subject}
-              className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3"
+              className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-4 sm:px-4"
             >
               {messages.map((message) => (
                 <div key={message.id} className="flex flex-col">
@@ -377,6 +467,8 @@ export function ThreadPane({
               onFailedChange={setSendFailed}
               agents={agents}
               attachments={attachmentsOn}
+              status={ticket.status}
+              drafts={drafts}
               labels={labels}
               className={composerClassName}
               buttonClassName={buttonClassName}
@@ -390,7 +482,7 @@ export function ThreadPane({
         <aside
           aria-label={labels.details}
           className={cx(
-            "order-first border-b border-border bg-muted/30 lg:order-last lg:block lg:w-72 lg:shrink-0 lg:overflow-y-auto lg:border-b-0 lg:border-l",
+            "order-first max-h-[60%] overflow-y-auto border-b border-border bg-muted/30 lg:order-last lg:block lg:max-h-none lg:w-80 lg:shrink-0 lg:border-b-0 lg:border-l",
             detailsOpen ? "block" : "hidden",
           )}
         >

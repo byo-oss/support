@@ -328,6 +328,16 @@ const agents = (data?.members ?? [])
 
 Both read one page of members: `getFullOrganization` returns up to the organization plugin's `membershipLimit` (100 by default), and `listMembers` returns `limit` members (the organization plugin's `membershipLimit`, 100 by default) and a `total`. With a larger staff organization, page through `listMembers` with `offset`.
 
+### Inbox layout
+
+Give `SupportInbox` a height: put it in a flex column with `className="min-h-0 flex-1"`, or give its parent a fixed height. With a height, the queue, the thread and the details panel each scroll on their own and the composer stays at the bottom of the thread. Without one, the inbox grows with its content and the page scrolls instead, taking the ticket's header and the composer out of view on a long thread. It is never shorter than 28rem.
+
+From `md` up the queue and the thread sit side by side, and from `lg` up the details panel (requester, status, priority, assignee, tags, merge, delete) is a third column. Below that, a Details button shows it. On a phone the queue and the thread take turns.
+
+The composer keeps each ticket's unsent text and its Reply or Internal note choice while the agent opens other tickets, for as long as the inbox is mounted. Ctrl+Enter (Cmd+Enter) sends. **Send and solve** replies and sets the ticket to solved in one request; it is offered on open and pending tickets, for replies, not notes. With attachments on, files can also be dropped on the composer or pasted into it, and png, jpeg, gif and webp attachments up to 5 MB show a preview in the thread (in the widget too).
+
+The widget names statuses in the customer's words (`customerStatus`: "With our team", "Awaiting your reply", "Solved", "Closed"). A status you renamed in `status` keeps your name there until you set `customerStatus`. Every relative time shows the full date on hover, from `absoluteTime`.
+
 ### Polling
 
 The components poll; there are no websockets. While the tab is hidden, nothing polls.
@@ -937,7 +947,7 @@ Tailwind v4 skips `node_modules` when it scans for classes, so point it at the p
 
 The components are styled with Tailwind classes only: without Tailwind they render unstyled (they still work).
 
-The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`, which current shadcn themes don't define.
+The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`, which current shadcn themes don't define. Status dots, the high-priority pill and internal notes also use Tailwind's default `sky`, `amber` and `emerald` palettes (with `dark:` variants), so keep the default palette or define those colors.
 
 Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName`, `buttonClassName` and `fieldClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button. `fieldClassName` goes on every text input, select and textarea of either component.
 

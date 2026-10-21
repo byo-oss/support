@@ -47,6 +47,16 @@ export type SupportWidgetLabels = {
   attachments: string;
   /** A file size, e.g. "12 KB". */
   fileSize: (bytes: number) => string;
+  /**
+   * Ticket statuses in the customer's words, shown in the list, the thread
+   * header and status changes ("Awaiting your reply" rather than "Pending").
+   * A status overridden in `status` and not here shows the `status` text.
+   */
+  customerStatus: Record<"open" | "pending" | "solved" | "closed", string>;
+  /** Shown in an empty list, above the New ticket button. */
+  emptyHint: string;
+  /** Alt text of an image attachment preview. */
+  imagePreview: (filename: string) => string;
 };
 
 function formatFileSize(bytes: number): string {
@@ -77,4 +87,12 @@ export const defaultWidgetLabels: SupportWidgetLabels = {
   attachmentFailed: "The file could not be opened.",
   attachments: "Attachments",
   fileSize: formatFileSize,
+  customerStatus: {
+    open: "With our team",
+    pending: "Awaiting your reply",
+    solved: "Solved",
+    closed: "Closed",
+  },
+  emptyHint: "Questions, problems or ideas: we read every ticket.",
+  imagePreview: (filename) => `Preview of ${filename}`,
 };

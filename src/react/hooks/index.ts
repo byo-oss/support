@@ -825,7 +825,8 @@ export function useSupportUpload(
  * GET `path?id=` through the auth client. A `Blob` comes back as is, any
  * other body is wrapped; null (and `fail`) on error.
  */
-async function downloadAttachment(
+/** @internal Not exported from the package: the components preview images with it. */
+export async function downloadAttachment(
   client: SupportFetchClient,
   path: string,
   id: string,

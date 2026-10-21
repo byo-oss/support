@@ -11,6 +11,7 @@ import {
 } from "react";
 import { TOUCH_TARGET } from "../classes";
 import {
+  downloadAttachment,
   type SupportFetchClient,
   useSupportTicket,
   useSupportUpload,
@@ -18,6 +19,14 @@ import {
   type WireCustomerMessage,
   type WireUploadedAttachment,
 } from "../hooks";
+import {
+  Avatar,
+  canPreview,
+  Icon,
+  ImagePreview,
+  StatusBadge,
+  Time,
+} from "../ui";
 import {
   buttonBase,
   canActAsRequester,
@@ -136,6 +145,19 @@ export function ThreadView({
     byMessage.set(attachment.messageId, list);
   }
 
+  // keep the newest message in view
+  const logRef = useRef<HTMLDivElement>(null);
+  const lastMessageId = thread.messages[thread.messages.length - 1]?.id;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll when the newest message changes
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [lastMessageId]);
+
+  // a preview that fails stays a placeholder, not an error banner
+  const preview = (id: string) =>
+    downloadAttachment(client, "/support/attachment", id, () => {});
+
   const status = ticket?.status;
   const canSolve = status === "open" || status === "pending";
   const canReopen = status === "solved";
@@ -145,13 +167,14 @@ export function ThreadView({
   const showError = thread.error !== null || actionError;
 
   return (
-    <section className={cn("flex min-h-0 flex-col", className)}>
+    <section className={cn("flex min-h-0 flex-1 flex-col", className)}>
       <header className="flex items-start gap-2 border-b border-border px-3 py-2">
         <button
           type="button"
           onClick={onBack}
-          className={cn(buttonBase, "shrink-0")}
+          className={cn(buttonBase, "shrink-0 gap-1")}
         >
+          <Icon name="back" />
           {labels.back}
         </button>
         <div className="min-w-0 flex-1">
@@ -172,14 +195,17 @@ export function ThreadView({
             )}
           </h2>
           {ticket ? (
-            <span className="inline-block rounded-full bg-accent px-2 py-0.5 text-xs text-accent-foreground">
-              {labels.status[ticket.status]}
+            <span className="mt-1 flex">
+              <StatusBadge
+                status={ticket.status}
+                label={labels.customerStatus[ticket.status]}
+              />
             </span>
           ) : null}
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto">
         {thread.isLoading && !ticket ? (
           <p
             className="px-3 py-6 text-center text-sm text-muted-foreground"
@@ -188,7 +214,7 @@ export function ThreadView({
             {labels.loading}
           </p>
         ) : (
-          <ul className="flex flex-col gap-2 p-3">
+          <ul className="flex flex-col gap-3 px-3 py-4">
             {thread.messages.map((message) => {
               const fallback = (
                 <MessageBody
@@ -197,16 +223,19 @@ export function ThreadView({
                   labels={labels}
                   onDownload={download}
                   onNavigate={onNavigate}
+                  preview={attachmentsEnabled ? preview : null}
                 />
               );
               return (
                 <li
                   key={message.id}
                   className={cn(
-                    "min-w-0 rounded-md border border-border p-2 text-sm",
-                    message.authorType === "agent"
-                      ? "bg-accent text-accent-foreground"
-                      : "bg-background text-foreground",
+                    "flex min-w-0 flex-col text-sm",
+                    message.kind === "event"
+                      ? "items-center"
+                      : message.authorType === "customer"
+                        ? "items-end"
+                        : "items-start",
                     messageClassName,
                   )}
                 >
@@ -263,14 +292,16 @@ export function ThreadView({
                   aria-pressed={ticket.rating === rating}
                   className={cn(
                     buttonBase,
+                    "gap-1.5",
                     ticket.rating === rating &&
-                      "bg-accent text-accent-foreground",
+                      "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
                   )}
                   onClick={() => {
                     if (ticket.rating !== rating)
                       void run(thread.update({ rating }));
                   }}
                 >
+                  <Icon name={rating === "good" ? "thumbsUp" : "thumbsDown"} />
                   {rating === "good" ? labels.rateGood : labels.rateBad}
                 </button>
               ))}
@@ -334,67 +365,119 @@ function MessageBody({
   labels,
   onDownload,
   onNavigate,
+  preview,
 }: {
   message: WireCustomerMessage;
   attachments: WireCustomerAttachment[];
   labels: WidgetLabels;
   onNavigate: (href: string) => void;
   onDownload: (attachment: WireCustomerAttachment) => Promise<void>;
+  /** Loads an image attachment for its thumbnail; null shows none. */
+  preview: ((id: string) => Promise<Blob | null>) | null;
 }) {
   if (message.kind === "event") {
     const text = eventText(message, labels);
     return text ? (
-      <p className="text-xs text-muted-foreground">
-        {text} · {labels.relativeTime(message.createdAt)}
+      <p className="px-4 text-center text-xs text-muted-foreground">
+        {text} · <Time value={message.createdAt} labels={labels} />
       </p>
     ) : null;
   }
+  const mine = message.authorType === "customer";
   const name =
     message.author?.name ??
     (message.authorType === "agent"
       ? labels.supportTeam
       : labels.unknownAuthor);
+  const images = preview ? attachments.filter(canPreview) : [];
   return (
-    <>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2">
-        <span className="break-words font-medium">{name}</span>
-        <span className="text-xs text-muted-foreground">
-          {labels.relativeTime(message.createdAt)}
-        </span>
-      </div>
-      <p className="mt-1 whitespace-pre-wrap break-words">
-        {renderBody(message.body, onNavigate)}
-      </p>
-      {attachments.length > 0 ? (
-        <ul
-          aria-label={labels.attachments}
-          className="mt-2 flex flex-col gap-1"
+    <div
+      className={cn(
+        "flex max-w-[88%] gap-2",
+        mine ? "flex-row-reverse" : "flex-row",
+      )}
+    >
+      {mine ? null : (
+        <Avatar
+          name={name}
+          image={message.author?.image}
+          tone="primary"
+          size="sm"
+        />
+      )}
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-1",
+          mine ? "items-end" : "items-start",
+        )}
+      >
+        <div className="flex flex-wrap items-baseline gap-x-1.5 text-xs text-muted-foreground">
+          <span className="break-words font-medium text-foreground">
+            {name}
+          </span>
+          <Time value={message.createdAt} labels={labels} />
+        </div>
+        <p
+          className={cn(
+            "w-fit max-w-full whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 leading-relaxed",
+            mine
+              ? "rounded-tr-sm bg-primary text-primary-foreground"
+              : "rounded-tl-sm bg-muted text-foreground",
+          )}
         >
-          {attachments.map((attachment) => (
-            <li
-              key={attachment.id}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
-            >
-              <span className="min-w-0 break-all">{attachment.filename}</span>
-              <span className="text-muted-foreground">
-                {labels.fileSize(attachment.size)}
-              </span>
-              <button
-                type="button"
-                onClick={() => void onDownload(attachment)}
-                className={cn(
-                  "rounded px-1 underline",
-                  focusRing,
-                  TOUCH_TARGET,
-                )}
-              >
-                {labels.downloadAttachment(attachment.filename)}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </>
+          {renderBody(message.body, onNavigate)}
+        </p>
+        {images.length > 0 && preview ? (
+          <ul className="flex flex-wrap gap-1.5">
+            {images.map((attachment) => (
+              <li key={attachment.id}>
+                <ImagePreview
+                  id={attachment.id}
+                  load={preview}
+                  alt={labels.imagePreview(attachment.filename)}
+                  onOpen={() => void onDownload(attachment)}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {attachments.length > 0 ? (
+          <ul
+            aria-label={labels.attachments}
+            className={cn(
+              "flex flex-wrap gap-1.5",
+              mine ? "justify-end" : "justify-start",
+            )}
+          >
+            {attachments.map((attachment) => (
+              <li key={attachment.id} className="min-w-0 max-w-full">
+                <button
+                  type="button"
+                  aria-label={labels.downloadAttachment(attachment.filename)}
+                  onClick={() => void onDownload(attachment)}
+                  className={cn(
+                    "flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-accent",
+                    focusRing,
+                    TOUCH_TARGET,
+                  )}
+                >
+                  <Icon
+                    name="paperclip"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="min-w-0 truncate">
+                    {attachment.filename}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {labels.fileSize(attachment.size)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -440,7 +523,8 @@ function eventText(
   if (!data) return null;
   if (data.type === "status") {
     const name = (value: string | null | undefined) =>
-      (value && labels.status[value as keyof WidgetLabels["status"]]) ||
+      (value &&
+        labels.customerStatus[value as keyof WidgetLabels["customerStatus"]]) ||
       value ||
       "";
     return labels.statusChanged(name(data.from), name(data.to));

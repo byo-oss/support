@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, WireCannedReply } from "../hooks";
 import { useSupportCannedReplies } from "../hooks";
+import { Icon } from "../ui";
 import {
   Button,
   buttonClass,
@@ -52,8 +53,14 @@ export function CannedPicker({
 
   return (
     <Popover
-      trigger={labels.cannedReplies}
+      trigger={
+        <>
+          <Icon name="zap" />
+          <span className="sr-only">{labels.cannedReplies}</span>
+        </>
+      }
       label={labels.cannedReplies}
+      title={labels.cannedReplies}
       buttonClassName={buttonClassName}
       placement="above-start"
       anchorToParent

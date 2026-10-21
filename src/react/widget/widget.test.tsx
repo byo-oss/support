@@ -186,7 +186,10 @@ describe("SupportWidget list", () => {
     expect(screen.getByRole("heading", { name: "My tickets" })).toBeTruthy();
     const rows = await screen.findAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(within(rows[0] as HTMLElement).getByText("Pending")).toBeTruthy();
+    // statuses read in the customer's words
+    expect(
+      within(rows[0] as HTMLElement).getByText("Awaiting your reply"),
+    ).toBeTruthy();
     expect(within(rows[0] as HTMLElement).getByText("Unread")).toBeTruthy();
     expect(within(rows[1] as HTMLElement).getByText("Solved")).toBeTruthy();
     expect(screen.getAllByText("moments ago")).toHaveLength(2);
@@ -372,7 +375,9 @@ describe("SupportWidget thread", () => {
     await openThread();
     expect(screen.getByText("Body m1")).toBeTruthy();
     expect(screen.getByText("Ada")).toBeTruthy();
-    expect(screen.getByText(/Status changed from Open to Solved/)).toBeTruthy();
+    expect(
+      screen.getByText(/Status changed from With our team to Solved/),
+    ).toBeTruthy();
     expect(screen.getByText(/duplicate ticket was merged/)).toBeTruthy();
     expect(screen.getByText("Someone")).toBeTruthy();
   });
@@ -1090,7 +1095,7 @@ describe("SupportWidget labels", () => {
       ...defaultLabels,
       ...defaultWidgetLabels,
     })) {
-      if (key === "status" || key === "priority") {
+      if (key === "status" || key === "priority" || key === "customerStatus") {
         labels[key] = Object.fromEntries(
           Object.keys(value as object).map((k) => [k, tagged(`${key}.${k}`)]),
         );
@@ -1111,6 +1116,8 @@ describe("SupportWidget labels", () => {
       "Body m4",
       "report.pdf",
       "photo.png",
+      // Ada's avatar initials
+      "A",
     ]);
     const texts = (root: Element): string[] => {
       const found: string[] = [];
@@ -1847,8 +1854,9 @@ describe("SupportWidget classes and layout", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
     await screen.findByText("Body m1");
     expect(document.querySelector(".thread-x")?.className).toContain("flex");
-    expect(document.querySelector(".message-x")?.className).toContain(
-      "rounded",
+    // on each message row, around the bubble
+    expect(document.querySelector(".message-x")?.textContent).toContain(
+      "Body m1",
     );
     expect(document.querySelector(".composer-x")).not.toBeNull();
   });
@@ -1905,11 +1913,13 @@ describe("SupportWidget classes and layout", () => {
     for (const name of [
       "Good",
       "Share with my organization",
-      "Download report.pdf",
       "Remove photo.png",
     ]) {
       expect(screen.getAllByText(name).length).toBeGreaterThan(0);
     }
+    expect(
+      screen.getAllByRole("button", { name: "Download report.pdf" }).length,
+    ).toBeGreaterThan(0);
     expect(seen).toBeGreaterThan(10);
   });
 

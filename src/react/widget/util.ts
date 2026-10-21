@@ -21,6 +21,13 @@ export function resolveWidgetLabels(
   };
   merged.status = { ...defaultLabels.status, ...overrides?.status };
   merged.priority = { ...defaultLabels.priority, ...overrides?.priority };
+  // an app that renamed `status` (say, to translate it) keeps its names here
+  // until it sets `customerStatus` too
+  merged.customerStatus = {
+    ...defaultWidgetLabels.customerStatus,
+    ...overrides?.status,
+    ...overrides?.customerStatus,
+  };
   return merged;
 }
 

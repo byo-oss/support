@@ -28,6 +28,8 @@ export type SupportLabels = {
   ticketNumber: (number: number) => string;
   /** A message or ticket time. Components show times only through this. @default formatRelativeTime */
   relativeTime: (value: Date | string) => string;
+  /** The full date and time, shown on hover over every relative time. @default the locale's medium date and short time */
+  absoluteTime: (value: Date | string) => string;
 };
 
 export const defaultLabels: SupportLabels = {
@@ -59,6 +61,15 @@ export const defaultLabels: SupportLabels = {
     count === 1 ? "1 unread ticket" : `${count} unread tickets`,
   ticketNumber: (number) => `#${number}`,
   relativeTime: (value) => formatRelativeTime(value),
+  absoluteTime: (value) => {
+    const date = typeof value === "string" ? new Date(value) : value;
+    return Number.isNaN(date.getTime())
+      ? ""
+      : date.toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+  },
 };
 
 /**

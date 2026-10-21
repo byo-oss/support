@@ -666,10 +666,11 @@ describe("thread", () => {
     // the note is marked and styled apart from replies
     const noteArticle = screen.getByText("Private remark").closest("article");
     expect(within(noteArticle as HTMLElement).getByText("Note")).toBeTruthy();
-    expect(noteArticle?.className).toContain("border-dashed");
-    expect(
-      screen.getByText("Words of m1").closest("article")?.className,
-    ).not.toContain("border-dashed");
+    // the bubble is the element around the text
+    const bubble = (text: string) =>
+      screen.getByText(text).closest("p")?.parentElement?.className;
+    expect(bubble("Private remark")).toContain("border-dashed");
+    expect(bubble("Words of m1")).not.toContain("border-dashed");
     // timeline
     expect(
       screen.getByText(/Status changed from Open to Pending/),
@@ -770,12 +771,11 @@ describe("composer", () => {
     await waitFor(() => expect(textbox().value).toBe(""));
   });
 
-  it("sends a note (internal true) with the chosen status", async () => {
+  it("sends a note (internal true), with no Send and solve", async () => {
     const { mocks } = await openTicket();
+    expect(screen.getByRole("button", { name: "Send and solve" })).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
-    fireEvent.change(screen.getByLabelText("Status after sending"), {
-      target: { value: "solved" },
-    });
+    expect(screen.queryByRole("button", { name: "Send and solve" })).toBeNull();
     write("Check logs");
     fireEvent.click(sendButton());
     await waitFor(() =>
@@ -783,9 +783,50 @@ describe("composer", () => {
         ticketId: "t1",
         body: "Check logs",
         internal: true,
+      }),
+    );
+  });
+
+  it("Send and solve replies with status solved", async () => {
+    const { mocks } = await openTicket();
+    write("All fixed");
+    fireEvent.click(screen.getByRole("button", { name: "Send and solve" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "All fixed",
+        internal: false,
         status: "solved",
       }),
     );
+    await waitFor(() => expect(textbox().value).toBe(""));
+  });
+
+  it("offers no Send and solve on a solved ticket", async () => {
+    await openTicket({ tickets: [ticket(1, { status: "solved" })] });
+    expect(screen.queryByRole("button", { name: "Send and solve" })).toBeNull();
+  });
+
+  it("keeps each ticket's unsent text while the agent opens another", async () => {
+    await openTicket();
+    write("Half a thought");
+    fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(SUBJECTS[1] as string) }),
+    );
+    await waitFor(() => expect(textbox().value).toBe(""));
+    expect(
+      (screen.getByRole("radio", { name: "Reply" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(SUBJECTS[0] as string) }),
+    );
+    await waitFor(() => expect(textbox().value).toBe("Half a thought"));
+    expect(
+      (screen.getByRole("radio", { name: "Internal note" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
   });
 
   it("keeps the draft and shows one error when sending fails", async () => {
@@ -1296,7 +1337,7 @@ describe("keyboard and popovers", () => {
       "Canned replies",
       "Mention",
       "Attach file",
-      "Status after sending",
+      "Send and solve",
       "Send",
     ]);
     // nothing in it takes focus out of order

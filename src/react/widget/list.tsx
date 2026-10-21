@@ -8,6 +8,7 @@ import {
 } from "react";
 import { TOUCH_TARGET } from "../classes";
 import type { UseSupportTicketsResult } from "../hooks";
+import { Icon, StatusBadge, Time } from "../ui";
 import {
   buttonBase,
   cn,
@@ -43,8 +44,8 @@ export function ListView({
   const loading = tickets.isLoading && tickets.tickets.length === 0;
 
   return (
-    <section className={cn("flex min-h-0 flex-col", className)}>
-      <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+    <section className={cn("flex min-h-0 flex-1 flex-col", className)}>
+      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
         <h2
           ref={headingRef}
           tabIndex={-1}
@@ -52,7 +53,12 @@ export function ListView({
         >
           {labels.myTickets}
         </h2>
-        <button type="button" onClick={onNew} className={primaryButton}>
+        <button
+          type="button"
+          onClick={onNew}
+          className={cn(primaryButton, "gap-1.5")}
+        >
+          <Icon name="plus" />
           {labels.newTicket}
         </button>
       </header>
@@ -71,9 +77,13 @@ export function ListView({
             {labels.loading}
           </p>
         ) : tickets.tickets.length === 0 && tickets.error === null ? (
-          <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-            {labels.empty}
-          </p>
+          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <span className="mb-1 flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Icon name="message" className="size-5" />
+            </span>
+            <p className="text-sm font-medium">{labels.empty}</p>
+            <p className="text-xs text-muted-foreground">{labels.emptyHint}</p>
+          </div>
         ) : (
           <ul className="divide-y divide-border">
             {tickets.tickets.map((ticket) => (
@@ -82,33 +92,47 @@ export function ListView({
                   type="button"
                   onClick={() => onOpen(ticket.id)}
                   className={cn(
-                    "flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-accent/50",
+                    "relative flex w-full items-start gap-2 px-4 py-3 text-left hover:bg-accent/50",
                     focusRing,
                     TOUCH_TARGET,
                   )}
                 >
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "mt-1.5 size-2 shrink-0 rounded-full",
-                      ticket.unread ? "bg-primary" : "bg-transparent",
-                    )}
-                  />
-                  <span className="min-w-0 flex-1">
+                  {ticket.status === "pending" ? (
                     <span
-                      className={cn(
-                        "block break-words text-sm",
-                        ticket.unread ? "font-semibold" : "font-medium",
-                      )}
-                    >
-                      <span className="text-muted-foreground">
-                        {labels.ticketNumber(ticket.number)}
-                      </span>{" "}
-                      {ticket.subject}
+                      aria-hidden
+                      className="absolute inset-y-0 left-0 w-0.5 bg-primary"
+                    />
+                  ) : null}
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline gap-2">
+                      <span
+                        className={cn(
+                          "min-w-0 flex-1 break-words text-sm",
+                          ticket.unread ? "font-semibold" : "font-medium",
+                        )}
+                      >
+                        {ticket.unread ? (
+                          <span
+                            aria-hidden
+                            className="mb-px mr-1.5 inline-block size-2 rounded-full bg-primary align-middle"
+                          />
+                        ) : null}
+                        {ticket.subject}
+                      </span>
+                      <Time
+                        value={ticket.lastMessageAt}
+                        labels={labels}
+                        className="shrink-0 text-[11px] text-muted-foreground"
+                      />
                     </span>
-                    <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-                      <span>{labels.status[ticket.status]}</span>
-                      <span>{labels.relativeTime(ticket.lastMessageAt)}</span>
+                    <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <span className="tabular-nums">
+                        {labels.ticketNumber(ticket.number)}
+                      </span>
+                      <StatusBadge
+                        status={ticket.status}
+                        label={labels.customerStatus[ticket.status]}
+                      />
                       {ticket.unread ? (
                         <span className="sr-only">{labels.unreadTicket}</span>
                       ) : null}
@@ -219,7 +243,7 @@ export function NewTicketView({
   };
 
   return (
-    <section className={cn("flex min-h-0 flex-col", className)}>
+    <section className={cn("flex min-h-0 flex-1 flex-col", className)}>
       <header className="flex items-center gap-2 border-b border-border px-3 py-2">
         <button type="button" onClick={onBack} className={buttonBase}>
           {labels.back}

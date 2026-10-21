@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { TOUCH_TARGET } from "../classes";
 import type { SupportFetchClient, WireAgentTicket } from "../hooks";
 import { useSupportQueue } from "../hooks";
+import { Icon } from "../ui";
 import { Button, Confirm, cx, fieldClass, Popover } from "./primitives";
 import type { InboxLabels } from "./types";
 
@@ -27,7 +28,12 @@ export function MergeControl({
 }: MergeControlProps) {
   return (
     <Popover
-      trigger={labels.merge}
+      trigger={
+        <>
+          <Icon name="merge" />
+          {labels.merge}
+        </>
+      }
       label={labels.merge}
       buttonClassName={buttonClassName}
       inline

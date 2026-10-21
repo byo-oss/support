@@ -6,8 +6,16 @@ import type {
   UseSupportAgentTicketResult,
   WireAgentTicket,
 } from "../hooks";
+import { Avatar, Icon, Time } from "../ui";
 import { MergeControl } from "./merge";
-import { Button, buttonClass, Confirm, cx, fieldClass } from "./primitives";
+import {
+  Button,
+  buttonClass,
+  Confirm,
+  cx,
+  fieldClass,
+  toDate,
+} from "./primitives";
 import { PRIORITIES, STATUSES } from "./queue";
 import type { InboxLabels, SupportAgent } from "./types";
 
@@ -52,8 +60,111 @@ export function DetailsPanel({
     !ticket.assigneeId ||
     agents.some((agent) => agent.id === ticket.assigneeId);
 
+  const when = (value: Date | string) => <Time value={value} labels={labels} />;
+  const requesterName = ticket.requester.name ?? ticket.requester.email;
+  const seenAt = ticket.requesterSeenAt ? toDate(ticket.requesterSeenAt) : null;
+  const seenLatest =
+    seenAt !== null &&
+    seenAt.getTime() >= toDate(ticket.lastMessageAt).getTime();
+
   return (
-    <div className={cx("flex flex-col gap-3 p-3 text-sm", className)}>
+    <div className={cx("flex flex-col gap-4 p-4 text-sm", className)}>
+      <section
+        aria-label={labels.requester}
+        className="flex flex-col gap-3 rounded-lg border border-border bg-background p-3"
+      >
+        <div className="flex items-center gap-3">
+          <Avatar
+            name={requesterName}
+            image={ticket.requester.image}
+            size="md"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium">
+              {requesterName ?? labels.unknownSender}
+            </p>
+            {ticket.requester.email &&
+            ticket.requester.email !== requesterName ? (
+              <p className="truncate text-xs text-muted-foreground">
+                {ticket.requester.email}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <ul className="flex flex-wrap gap-1.5 text-[11px]">
+          <li
+            className={cx(
+              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
+              ticket.verified
+                ? "border-border text-muted-foreground"
+                : "border-destructive/40 bg-destructive/10 text-destructive",
+            )}
+          >
+            <Icon
+              name={ticket.verified ? "shield" : "alert"}
+              className="size-3 shrink-0"
+            />
+            {ticket.verified ? labels.verified : labels.unverifiedBadge}
+          </li>
+          <li className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+            <Icon
+              name={ticket.channel === "email" ? "mail" : "globe"}
+              className="size-3 shrink-0"
+            />
+            {ticket.channel === "email"
+              ? labels.channelEmail
+              : labels.channelWeb}
+          </li>
+          {ticket.visibility === "organization" ? (
+            <li className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-muted-foreground">
+              {labels.sharedWithOrganization}
+            </li>
+          ) : null}
+        </ul>
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Icon name="eye" className="size-3.5 shrink-0" />
+          {seenLatest
+            ? labels.requesterSeenLatest
+            : seenAt
+              ? labels.requesterSeenAt(labels.relativeTime(seenAt))
+              : labels.requesterNotSeen}
+        </p>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">{labels.opened}</dt>
+          <dd>{when(ticket.createdAt)}</dd>
+          <dt className="text-muted-foreground">{labels.lastActivity}</dt>
+          <dd>{when(ticket.lastMessageAt)}</dd>
+          {ticket.solvedAt ? (
+            <>
+              <dt className="text-muted-foreground">{labels.solvedAt}</dt>
+              <dd>{when(ticket.solvedAt)}</dd>
+            </>
+          ) : null}
+          {ticket.rating ? (
+            <>
+              <dt className="text-muted-foreground">{labels.rating}</dt>
+              <dd
+                className={cx(
+                  "inline-flex items-center gap-1 font-medium",
+                  ticket.rating === "good"
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-destructive",
+                )}
+              >
+                <Icon
+                  name={ticket.rating === "good" ? "thumbsUp" : "thumbsDown"}
+                  className="size-3.5 shrink-0"
+                />
+                {ticket.rating === "good" ? labels.ratedGood : labels.ratedBad}
+              </dd>
+            </>
+          ) : null}
+        </dl>
+      </section>
+
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {labels.properties}
+      </h3>
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium text-muted-foreground">
           {labels.statusField}
@@ -129,7 +240,7 @@ export function DetailsPanel({
             {ticket.tags.map((tag) => (
               <li
                 key={tag}
-                className="flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs"
+                className="flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs"
               >
                 {tag}
                 <button
@@ -141,7 +252,7 @@ export function DetailsPanel({
                     TOUCH_ICON,
                   )}
                 >
-                  <span aria-hidden>×</span>
+                  <Icon name="x" className="size-3 shrink-0" />
                 </button>
               </li>
             ))}
@@ -183,7 +294,7 @@ export function DetailsPanel({
         </form>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 border-t border-border pt-4">
         {canMerge ? (
           <MergeControl
             client={client}
@@ -200,6 +311,7 @@ export function DetailsPanel({
             extra={buttonClassName}
             onClick={() => setConfirmDelete(true)}
           >
+            <Icon name="trash" />
             {labels.deleteTicket}
           </Button>
         )}
