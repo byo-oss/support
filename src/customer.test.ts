@@ -782,6 +782,23 @@ describe("updateMySupportTicket: visibility (J4)", () => {
     expect((await list(w.teammate)).tickets).toEqual([]);
   });
 
+  it("unsharing and solving in one call emits the status change as private", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    await setup({ onEvent: (event) => void events.push(event) });
+    const ticket = await sharedTicket();
+    events.length = 0;
+    await updateMine(w.customer, ticket.id, {
+      status: "solved",
+      visibility: "private",
+    });
+    const changed = events.filter(
+      (e) => e.type === "support.ticket.status_changed",
+    );
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.data.visibility).toBe("private");
+    expect((await row(ticket.id)).visibility).toBe("private");
+  });
+
   it("refuses sharing a ticket with no organization (NOT_ALLOWED)", async () => {
     const { ticket } = await create(w.customer);
     await expect(

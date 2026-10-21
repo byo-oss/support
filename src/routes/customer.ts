@@ -398,14 +398,8 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
           rating !== undefined && rating !== ticket.rating ? rating : undefined;
 
         let current = ticket;
-        if (to) {
-          current = await applyStatus(rt, {
-            ticket: current,
-            to,
-            actorId: me,
-            authorType: "customer",
-          });
-        }
+        // Visibility first, so a status event from the same call carries the
+        // new visibility (a ticket made private never emits as shared).
         if (share !== undefined || rate !== undefined) {
           const patch: Partial<SupportTicketRow> = { updatedAt: new Date() };
           if (share !== undefined) patch.visibility = share;
@@ -416,6 +410,14 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
             update: patch,
           });
           current = updated ?? { ...current, ...patch };
+        }
+        if (to) {
+          current = await applyStatus(rt, {
+            ticket: current,
+            to,
+            actorId: me,
+            authorType: "customer",
+          });
         }
         return {
           ticket: toCustomerTicket(current, me),
