@@ -4,5 +4,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.sql.test.ts"],
+    // PGlite migration + seeding is slow when files run side by side
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
   },
 });
