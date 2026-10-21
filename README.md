@@ -20,7 +20,7 @@ npm install @byo-oss/support
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer, `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. An app still on zod 3 has to move to zod 4 first (npm stops with `ERESOLVE`). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20 or newer, `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs), `@better-auth/core` at the same version as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. An app still on zod 3 has to move to zod 4 first (npm stops with `ERESOLVE`). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 
@@ -183,7 +183,7 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 | `attachments.storage` | `SupportStorage` | required | `s3Storage(...)`, or your own |
 | `attachments.maxBytes` | number | `10485760` (10 MiB) | Largest upload |
 | `attachments.allowedTypes` | string[] | png, jpeg, gif, webp, pdf, plain text, csv, zip | Allowed content types. HTML, SVG and XHTML are refused at boot even if listed |
-| `onEvent` | `(event: ByoEvent) => void \| Promise<void>` | | Receives every support event. Errors are logged, never thrown. See [Events](#events-to-notifications) |
+| `onEvent` | `(event: ByoEvent) => void \| Promise<void>` | | Receives every support event, after the write commits. Errors are logged, never thrown. See [Events](#events-to-notifications) |
 | `organizationCleanup` | boolean | `true` | Clean up after the organization plugin's delete, remove-member and leave endpoints. Turn off to keep history. See [Lifecycle](#lifecycle) |
 | `autoCloseAfter` | number (ms) | `604800000` (7 days) | The sweep closes tickets solved this long ago |
 | `maxAttempts` | number | `5` | Attempts per delivery before it is marked `failed` |
@@ -542,7 +542,9 @@ await linkSupportRequester(auth, userId); // → { tickets, messages }
 
 ## Events to notifications
 
-Support emits an event after every write that matters, through `onEvent`. Events are in-process and best-effort: a handler that throws is logged and never fails the request, and nothing is stored or retried. `data` carries ids, statuses and kinds, never message bodies, and always the ticket's `visibility` (`"private"` or `"organization"`) besides the fields below.
+Support emits an event after every write that matters, through `onEvent`. Events are in-process and best-effort: a handler that throws is logged and never fails the request, and nothing is stored or retried.
+
+Events fire after the write commits. Endpoint writes don't join a caller's transaction, so their events follow at once; `sweepAll` inside your `runWithTransaction` holds the sweep's `support.ticket.status_changed` events until it commits and drops them on rollback. Join with better-auth's `runWithTransaction`, not an `adapter.transaction` you wrap yourself: only `runWithTransaction` marks the transaction as active, so a hand-rolled one fires its events before it commits. On an adapter without transactions the events fire at once. If you call `runWithTransaction` yourself, pass `{ onAfterCommitHookError }` so a hook queued earlier in the same transaction that throws can't skip the events queued after it. `data` carries ids, statuses and kinds, never message bodies, and always the ticket's `visibility` (`"private"` or `"organization"`) besides the fields below.
 
 | Event | `userId` | `data` (plus `visibility`) |
 |---|---|---|

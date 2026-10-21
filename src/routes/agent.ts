@@ -421,13 +421,12 @@ export function agentEndpoints(opts: ResolvedSupportOptions) {
               actorId,
             });
             await emit(
-              opts,
+              rt,
               ticketEvent("support.ticket.assigned", ticket, {
                 actorId,
                 ...(assigneeId ? { userId: assigneeId } : {}),
                 data: { ticketId: ticket.id, from, to: assigneeId },
               }),
-              rt.context.logger,
             );
           }
           if (addTags?.length || removeTags?.length) {
