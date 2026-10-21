@@ -45,6 +45,9 @@ export const support = (options: SupportOptions = {}) => {
           `[@byo-oss/support] ${SUPPORT_ERROR_CODES.ORGANIZATION_PLUGIN_REQUIRED.code}: add organization() to plugins; support's schema and staff model need it`,
         );
       }
+      // request-time misuse (a staffOrganizationId function that throws)
+      // goes to better-auth's logger
+      opts.logger = context.logger;
       // the option as given: `null` (no agents on purpose) and a function
       // (resolved per request) never warn
       const staff = options.staffOrganizationId;

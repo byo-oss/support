@@ -408,6 +408,137 @@ describe("staffOrganizationId as a function or null", () => {
       "[@byo-oss/support] staffOrganizationId must be a string, null or a function",
     );
   });
+
+  /** A better-auth logger that keeps support's staffOrganizationId errors. */
+  function errorLog() {
+    const errors: { message: string; args: unknown[] }[] = [];
+    const logger = {
+      level: "error" as const,
+      log: (level: string, message: string, ...args: unknown[]) => {
+        if (level === "error" && message.includes("staffOrganizationId")) {
+          errors.push({ message, args });
+        }
+      },
+    };
+    return { errors, authOptions: { logger } };
+  }
+
+  it("a function that throws means no staff org for that call (never a 500), logged once", async () => {
+    let broken = true;
+    const boom = new Error("lookup failed");
+    const log = errorLog();
+    const auth = createTestAuth(
+      {
+        staffOrganizationId: () => {
+          if (broken) throw boom;
+          return STAFF_ORG_ID;
+        },
+      },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    const owner = w.agents.owner;
+    const { ctx, opts } = await gate(auth, owner.headers);
+    await expect(asAgent(auth, owner, "read")).rejects.toEqual(notAllowed);
+    await expect(asAgent(auth, owner, "reply")).rejects.toEqual(notAllowed);
+    expect(await defaultIsAgent(ctx, opts, owner.user.id)).toBe(false);
+    expect(
+      await deleteMemberData(auth, {
+        userId: w.agents.member.user.id,
+        organizationId: STAFF_ORG_ID,
+      }),
+    ).toEqual({ unassigned: 0 });
+    expect(log.errors).toHaveLength(1);
+    expect(log.errors[0]?.message).toContain(
+      "[@byo-oss/support] staffOrganizationId threw; treating it as no staff organization. It must be synchronous and must not throw.",
+    );
+    expect(log.errors[0]?.args).toContain(boom);
+
+    // fixed: the next call uses it
+    broken = false;
+    await expect(asAgent(auth, owner, "read")).resolves.toBeTruthy();
+    expect(log.errors).toHaveLength(1);
+  });
+
+  it("an async function's Promise is never used as the id: no staff org, logged once, a rejection never unhandled", async () => {
+    const log = errorLog();
+    const authorize = vi.fn((_input: SupportAuthorizeInput) => false);
+    const auth = createTestAuth(
+      {
+        // the type says sync; an app can still pass an async function
+        staffOrganizationId: (async () =>
+          STAFF_ORG_ID) as unknown as () => string,
+        authorize,
+      },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    await expect(asAgent(auth, w.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    await expect(asAgent(auth, w.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    expect(authorize.mock.calls.map(([input]) => input.organizationId)).toEqual(
+      [undefined, undefined],
+    );
+    expect(log.errors).toHaveLength(1);
+    expect(log.errors[0]?.message).toContain(
+      "staffOrganizationId returned a Promise, not a string",
+    );
+
+    // one that rejects: handled here, so no unhandled rejection fails the run
+    const rejecting = createTestAuth(
+      {
+        staffOrganizationId: (async () => {
+          throw new Error("async lookup failed");
+        }) as unknown as () => string,
+      },
+      { authOptions: errorLog().authOptions },
+    );
+    const r = await seedSupportWorld(rejecting, STAFF_ORG_ID);
+    await expect(asAgent(rejecting, r.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("any other non-string from the function means no staff org, logged once", async () => {
+    const log = errorLog();
+    const auth = createTestAuth(
+      { staffOrganizationId: (() => 42) as unknown as () => string },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    const { ctx, opts } = await gate(auth, w.agents.owner.headers);
+    await expect(asAgent(auth, w.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    expect(await defaultIsAgent(ctx, opts, w.agents.owner.user.id)).toBe(false);
+    expect(log.errors.map((e) => e.message)).toEqual([
+      "[@byo-oss/support] staffOrganizationId returned a number, not a string; treating it as no staff organization. It must be synchronous and must not throw.",
+    ]);
+  });
+
+  it("null, undefined and a string from the function log nothing", async () => {
+    const log = errorLog();
+    let staff: string | null | undefined = null;
+    const auth = createTestAuth(
+      { staffOrganizationId: () => staff },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    await expect(asAgent(auth, w.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    staff = undefined;
+    await expect(asAgent(auth, w.agents.owner, "read")).rejects.toEqual(
+      notAllowed,
+    );
+    staff = STAFF_ORG_ID;
+    await expect(asAgent(auth, w.agents.owner, "read")).resolves.toBeTruthy();
+    expect(log.errors).toEqual([]);
+  });
 });
 
 describe("session acceptance", () => {

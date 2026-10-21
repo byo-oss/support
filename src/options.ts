@@ -1,6 +1,7 @@
 import type { ByoEventHandler } from "@byo-oss/core";
 import type { Mailer } from "@byo-oss/mailer";
 import type { InferOptionSchema, Session, User } from "better-auth";
+import type { SupportLogger } from "./events";
 import type { DkimResolver } from "./inbound/verify";
 import type { SupportSchema } from "./schema";
 
@@ -167,6 +168,11 @@ export type SupportAttachmentOptions = {
  * needs it (the default `authorize` and `isAgent`, and the staff check when a
  * member leaves), for apps that look the id up after boot. `null`, or a
  * function returning `null`/`undefined`: no staff organization.
+ *
+ * A function must be synchronous and must not throw: one that throws or
+ * returns anything but a string, `null` or `undefined` (a Promise from an
+ * `async` function, say) counts as no staff organization for that call, and
+ * the first time it happens is logged as an error.
  */
 export type SupportStaffOrganizationId =
   | string
@@ -176,13 +182,22 @@ export type SupportStaffOrganizationId =
 export type SupportOptions = {
   /**
    * The vendor's staff organization. Agents are members of it whose role has
-   * `support` actions. A function is resolved per request. `null` runs
-   * without agents on purpose: agent endpoints deny (unless `authorize`
-   * says otherwise) and nothing is logged. Unset: the same, plus one warning
-   * at boot.
+   * `support` actions. A function is resolved per request; it must be
+   * synchronous and must not throw (otherwise: no staff organization for that
+   * call, logged once). `null` runs without agents on purpose: agent
+   * endpoints deny (unless `authorize` says otherwise) and nothing is
+   * logged. Unset: the same, plus one warning at boot.
+   *
+   * With `null` (or no staff organization) and a custom `authorize`, pass
+   * `isAgent` too: the default `isAgent` looks in the staff organization, so
+   * without one every assignment and @mention fails with `NOT_AN_AGENT`.
    */
   staffOrganizationId?: SupportStaffOrganizationId;
-  /** Replaces the default staff-org permission check (SPEC §4.3). */
+  /**
+   * Replaces the default staff-org permission check (SPEC §4.3). Without a
+   * staff organization, pass `isAgent` as well, or assignment and @mentions
+   * fail with `NOT_AN_AGENT`.
+   */
   authorize?: SupportAuthorize;
   /** Which sessions may use support endpoints. @default refuse impersonated sessions */
   acceptSession?: SupportAcceptSession;
@@ -285,6 +300,12 @@ export type ResolvedSupportOptions = {
   features: SupportFeatures;
   /** The options as given. */
   raw: SupportOptions;
+  /**
+   * Where misuse found at request time is logged (a `staffOrganizationId`
+   * function that throws or returns a non-string). `init` sets it to
+   * better-auth's `context.logger`; `console` until then.
+   */
+  logger: SupportLogger;
 };
 
 /**
@@ -487,9 +508,44 @@ export function resolveOptions(
   const pageSize = positiveInteger("pageSize", options.pageSize, 25);
   if (pageSize > 50) fail(`pageSize can be at most 50, got ${pageSize}`);
 
-  return {
-    staffOrganizationId: () =>
-      (typeof staff === "function" ? staff() : staff) || undefined,
+  // a function is the app's code, called per request: one that throws or
+  // returns a non-string (an async function's Promise) means no staff org
+  // for that call, never a 500 or a Promise used as an id. Logged once.
+  let staffMisuseLogged = false;
+  const staffMisuse = (message: string, error?: unknown) => {
+    if (staffMisuseLogged) return;
+    staffMisuseLogged = true;
+    try {
+      resolved.logger.error(
+        `[@byo-oss/support] ${message}; treating it as no staff organization. It must be synchronous and must not throw.`,
+        ...(error === undefined ? [] : [error]),
+      );
+    } catch {
+      // a broken logger must not fail the request
+    }
+  };
+  const staffOrganizationId = (): string | undefined => {
+    if (typeof staff !== "function") return staff || undefined;
+    let value: unknown;
+    try {
+      value = staff();
+    } catch (error) {
+      staffMisuse("staffOrganizationId threw", error);
+      return undefined;
+    }
+    if (typeof value === "string") return value || undefined;
+    if (value === null || value === undefined) return undefined;
+    const thenable = typeof (value as { then?: unknown }).then === "function";
+    // nobody awaits it: keep a rejection from going unhandled
+    if (thenable) Promise.resolve(value).catch(() => {});
+    staffMisuse(
+      `staffOrganizationId returned ${thenable ? "a Promise" : `a ${typeof value}`}, not a string`,
+    );
+    return undefined;
+  };
+
+  const resolved: ResolvedSupportOptions = {
+    staffOrganizationId,
     authorize: options.authorize,
     acceptSession: options.acceptSession ?? defaultAcceptSession,
     isAgent: options.isAgent,
@@ -512,5 +568,7 @@ export function resolveOptions(
     uploadTtlMs: 24 * 60 * 60_000,
     features: { attachments: !!options.attachments, merge: MERGE_AVAILABLE },
     raw: options,
+    logger: console,
   };
+  return resolved;
 }

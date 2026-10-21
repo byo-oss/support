@@ -472,6 +472,22 @@ describe("wrapsInbound", () => {
     ).toThrow(/non-empty key/);
   });
 
+  it("throws at setup for a key with surrounding whitespace, which could never match", () => {
+    // header values arrive trimmed; a trailing newline from an env file is the usual way in
+    for (const key of [`${KEY}\n`, ` ${KEY}`, `${KEY}\t`, `${KEY}\r\n`]) {
+      expect(
+        () => wrapsInbound({ key, bucket: BUCKET, region: "us-east-1" }),
+        JSON.stringify(key),
+      ).toThrow(
+        "[@byo-oss/support] wrapsInbound key must not start or end with whitespace",
+      );
+    }
+    // inside the key is fine: the header keeps it
+    expect(() =>
+      wrapsInbound({ key: "two words", bucket: BUCKET, region: "us-east-1" }),
+    ).not.toThrow();
+  });
+
   it("creates an S3Client from region on first use when no client is given", async () => {
     vi.resetModules();
     const created: unknown[] = [];

@@ -49,7 +49,8 @@ export type SupportWidgetProps = {
   /**
    * Called when the user changes the open ticket (opening a row, creating a
    * ticket, Back) with its id, or `null` when no ticket is open (the list or
-   * the new-ticket form). Sync your URL here.
+   * the new-ticket form). Sync your URL here. A ticket created after the
+   * user left its form (Back) is neither opened nor reported.
    */
   onTicketChange?: (ticketId: string | null) => void;
   /** Popover only: whether the panel starts open. @default Boolean(ticketId) */
@@ -59,6 +60,8 @@ export type SupportWidgetProps = {
    * `onOpenChange`. When the app opens the panel (closed to open, not from
    * the launcher) while `ticketId` is set, the panel shows that ticket's
    * thread, so the same link can open it again after the user closed it.
+   * A launcher click the app declines (keeping `open` false) doesn't count
+   * as the launcher for the app's own later open.
    */
   open?: boolean;
   /**
@@ -170,6 +173,10 @@ export function SupportWidget({
   const openId = view.name === "thread" ? view.ticketId : null;
   const openIdRef = useRef(openId);
   openIdRef.current = openId;
+  // the view on screen, by identity: a create that settles after the user
+  // left its form (Back, or the app's ticketId) must not pull them away
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const onTicketChangeRef = useRef(onTicketChange);
   onTicketChangeRef.current = onTicketChange;
   // an inline widget's first view leaves focus where the page put it; a
@@ -220,19 +227,22 @@ export function SupportWidget({
   }, [ticketId, inline, setOpen]);
 
   // the app opening the panel (not the launcher) shows the linked ticket,
-  // so the same link works again after the user closed the panel
+  // so the same link works again after the user closed the panel. A launcher
+  // click counts only for the render it causes: when a controlled app
+  // declines it (keeps `open` false), the flag is cleared there, so the
+  // app's own later open still shows the linked ticket.
   const launcherOpened = useRef(false);
+  const [launcherClicks, setLauncherClicks] = useState(0);
   const wasOpen = useRef(open);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: launcherClicks re-runs it after every launcher click, to clear the flag
   useEffect(() => {
     const opened = open && !wasOpen.current;
     wasOpen.current = open;
-    if (!opened) return;
-    if (launcherOpened.current) {
-      launcherOpened.current = false;
-      return;
-    }
+    const fromLauncher = launcherOpened.current;
+    launcherOpened.current = false;
+    if (!opened || fromLauncher) return;
     if (ticketId) setView({ name: "thread", ticketId });
-  }, [open, ticketId]);
+  }, [open, ticketId, launcherClicks]);
 
   useEffect(() => {
     if (inline || !open) return;
@@ -285,7 +295,12 @@ export function SupportWidget({
           labels={labels}
           organizationId={organizationId}
           onBack={backToList}
-          onCreated={(ticketId) => go({ name: "thread", ticketId })}
+          onCreated={(ticketId) => {
+            // `view` is the form this create was sent from; once the user
+            // left it, the new ticket just shows up in the list
+            if (viewRef.current !== view) return;
+            go({ name: "thread", ticketId });
+          }}
           focusOnMount={focusOnMount}
           className={listClassName}
           composerClassName={composerClassName}
@@ -339,6 +354,7 @@ export function SupportWidget({
         aria-describedby={countId}
         onClick={() => {
           launcherOpened.current = !open;
+          setLauncherClicks((clicks) => clicks + 1);
           setOpen(!open);
         }}
         className={cn(LAUNCHER_CLASS, buttonClassName)}

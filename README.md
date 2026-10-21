@@ -160,8 +160,8 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `staffOrganizationId` | string \| `null` \| `() => string \| null \| undefined` | | The vendor's staff organization. Agents are its members whose role has `support` actions. A function is called on every request that needs the id (the default `authorize` and `isAgent`, and the staff check when a member leaves). `null`: no agents, on purpose (a custom `authorize` still decides, with `organizationId` undefined); unset: the same plus one warning at boot |
-| `authorize` | `({ session, headers, organizationId, permissions }) => boolean \| Promise<boolean>` | staff-organization check | Replaces the permission check on every agent endpoint. `organizationId` is always `staffOrganizationId` (as resolved for the request), never a ticket's organization. `permissions` is e.g. `{ support: ["reply"] }` |
+| `staffOrganizationId` | string \| `null` \| `() => string \| null \| undefined` | | The vendor's staff organization. Agents are its members whose role has `support` actions. A function is called on every request that needs the id (the default `authorize` and `isAgent`, and the staff check when a member leaves); it must be synchronous and must not throw (one that throws or returns a non-string, such as an `async` function's Promise, counts as no staff organization and is logged once). `null`: no agents, on purpose (a custom `authorize` still decides, with `organizationId` undefined; pass `isAgent` too, or assignment and @mentions fail with `NOT_AN_AGENT`); unset: the same plus one warning at boot |
+| `authorize` | `({ session, headers, organizationId, permissions }) => boolean \| Promise<boolean>` | staff-organization check | Replaces the permission check on every agent endpoint. `organizationId` is always `staffOrganizationId` (as resolved for the request), never a ticket's organization. `permissions` is e.g. `{ support: ["reply"] }`. Without a staff organization (`null`), pass `isAgent` as well: the default looks in the staff organization, so every assignment and @mention would fail with `NOT_AN_AGENT` |
 | `acceptSession` | `({ session, headers, kind }) => boolean \| Promise<boolean>` | refuses impersonated sessions | Called first on every session endpoint; `kind` is `"customer"` or `"agent"`. `false` answers 403 `SESSION_NOT_ACCEPTED` |
 | `isAgent` | `(userId) => boolean \| Promise<boolean>` | member of the staff organization whose role has `support: ["read"]` | Who can be assigned a ticket or @mentioned. Anyone else is `NOT_AN_AGENT` |
 | `mailer` | `Mailer` | | Sends thread mail to requesters. Requires `email`. Unset: no outbound mail and no `supportDelivery` table |
@@ -245,9 +245,9 @@ The owner role has every `support` action once step 2 is done. The other route i
 `variant="inline"` renders the panel in place instead, at the full width of its container, with no launcher, and it never closes. Use it for a page of its own: "My tickets", or the page your email links open.
 
 - `ticketId` opens that ticket's thread (a popover starts open unless `defaultOpen` or `open` says otherwise). A new value opens that ticket; `null` or `undefined` after a ticket goes back to the list. Back goes to the list.
-- `onTicketChange(id | null)` is called when the user opens a ticket (a row, or the one they just created) with its id, and with `null` when they go Back to the list or the new-ticket form. Sync your URL with it, so Back on an inline page doesn't leave the address on the old ticket. Changes that come from the `ticketId` prop never call it.
+- `onTicketChange(id | null)` is called when the user opens a ticket (a row, or the one they just created) with its id, and with `null` when they go Back to the list or the new-ticket form. Sync your URL with it, so Back on an inline page doesn't leave the address on the old ticket. Changes that come from the `ticketId` prop never call it. If the user leaves the new-ticket form (Back) before the ticket is created, the widget stays where they went and doesn't report it; the ticket shows up in the list.
 - `defaultOpen` sets whether the popover starts open (default: open when `ticketId` is set).
-- `open` and `onOpenChange` control the popover. The launcher, Escape and a click outside call `onOpenChange`, and the panel follows `open`. When your app sets `open` to `true` (not the launcher) while `ticketId` is set, the panel shows that ticket's thread. That is how the same link opens the same ticket again after the user closed the panel: set `open` back to `true`. The launcher reopens wherever the user left off.
+- `open` and `onOpenChange` control the popover. The launcher, Escape and a click outside call `onOpenChange`, and the panel follows `open`. When your app sets `open` to `true` (not the launcher) while `ticketId` is set, the panel shows that ticket's thread. That is how the same link opens the same ticket again after the user closed the panel: set `open` back to `true`. The launcher reopens wherever the user left off; if your app declines a launcher click (keeps `open` false), its own later `open` still shows `ticketId`'s thread.
 
 ```tsx
 const [open, setOpen] = useState(Boolean(ticketId));
@@ -269,9 +269,11 @@ const [open, setOpen] = useState(Boolean(ticketId));
 />
 ```
 
+`onTicketChange(null)` (Back to the list) needs an address too, so pick the list route together with `ticketPath`: the list at `/help` with `` ticketPath: (id) => `/help?ticket=${id}` `` as above, or one route with an optional id (`/help/{-$id}` in TanStack Router; in Next.js a layout, as for the inbox below) with `` ticketPath: (id) => `/help/${id}` ``.
+
 Keep the page and the ticket on one route: a query parameter as above, an optional path parameter, or a layout route that renders the widget for both paths. Two sibling routes (`/help` and `/help/:id`, each rendering its own widget) remount the component every time the user opens a ticket or goes Back: it loads the list again from the first page and loses its scroll position and any pages loaded with "Load more".
 
-**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`, called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop.
+**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`, called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop. A merge or delete that settles after the agent opened another ticket leaves that ticket open and reports nothing, and nothing is reported after the inbox unmounts.
 
 Render the inbox once, for both `/staff/support` and `/staff/support/:id`: from one route with an optional `:id`, or from a layout route whose child only declares the param. Don't render it from two sibling routes. Moving between siblings unmounts one inbox and mounts another, which loses the search, the filters and the checked rows every time the user opens or closes a ticket. For example, a TanStack Router layout route `/staff/support` with a child `/staff/support/$id` that has no component of its own:
 
@@ -324,7 +326,7 @@ const agents = (data?.members ?? [])
   .map((member) => ({ id: member.userId, name: member.user.name, image: member.user.image }));
 ```
 
-Both read one page of members: `getFullOrganization` returns up to the organization plugin's `membershipLimit` (100 by default), and `listMembers` returns `limit` members (100 by default) and a `total`. With a larger staff organization, page through `listMembers` with `offset`.
+Both read one page of members: `getFullOrganization` returns up to the organization plugin's `membershipLimit` (100 by default), and `listMembers` returns `limit` members (the organization plugin's `membershipLimit`, 100 by default) and a `total`. With a larger staff organization, page through `listMembers` with `offset`.
 
 ### Polling
 
@@ -409,7 +411,7 @@ The endpoint is `POST <your auth base path>/support/inbound`, for example `https
 
 **`rawRelay({ secret, maxBytes? })`** works with any relay that POSTs the raw message (`Content-Type: message/rfc822`) with `Authorization: Bearer <secret>`: Postmark inbound, Mailgun routes, a Cloudflare Email Worker. The secret is compared in constant time (401 on a mismatch), a message over `maxBytes` (25 MiB by default) answers 413 and an empty body 400. The secret must not contain whitespace: the bearer token can't carry it, so `rawRelay` throws at boot rather than answer 401 to every message (trim a value read from a file).
 
-**`wrapsInbound({ key, bucket, region, client?, maxBytes? })`** from `@byo-oss/support/wraps` takes Wraps inbound mail (SES to S3, announced by an EventBridge `email.received` event). Point an EventBridge API destination at the endpoint with the header `X-Wraps-Inbound-Key: <key>`. The source reads `rawS3Key` from the event (the whole event or just its `detail`) and fetches that object. It needs `@aws-sdk/client-s3` and a role that can read the bucket:
+**`wrapsInbound({ key, bucket, region, client?, maxBytes? })`** from `@byo-oss/support/wraps` takes Wraps inbound mail (SES to S3, announced by an EventBridge `email.received` event). Point an EventBridge API destination at the endpoint with the header `X-Wraps-Inbound-Key: <key>`. The source reads `rawS3Key` from the event (the whole event or just its `detail`) and fetches that object. The key must not start or end with whitespace (header values arrive trimmed, so it could never match): `wrapsInbound` throws at boot instead. It needs `@aws-sdk/client-s3` and a role that can read the bucket:
 
 ```json
 {

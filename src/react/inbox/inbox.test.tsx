@@ -1575,6 +1575,191 @@ describe("deep links (ticketId, onTicketChange)", () => {
   });
 });
 
+describe("async moves report only the user's own selection", () => {
+  type Settled<T> = { data: T | null; error: unknown };
+  /** A request that settles when the test says so. */
+  function deferred<T>() {
+    let settle: (value: Settled<T>) => void = () => {};
+    const promise = new Promise<Settled<T>>((resolve) => {
+      settle = resolve;
+    });
+    return { promise, settle };
+  }
+  const panel = () =>
+    within(screen.getByRole("complementary", { name: "Details" }));
+  const mergeOptions: Options = {
+    ticketsFor: (query) =>
+      query?.q === "2" ? [ticket(2)] : [ticket(1), ticket(2), ticket(3)],
+  };
+
+  /** Deletes the open ticket from the side panel; the request stays pending. */
+  async function startDelete(mocks: ReturnType<typeof makeClient>["mocks"]) {
+    const pending = deferred<{ deleted: number }>();
+    mocks.delete.mockImplementationOnce(() => pending.promise);
+    fireEvent.click(panel().getByRole("button", { name: "Delete ticket" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t1"] }),
+    );
+    return pending;
+  }
+
+  /** Merges the open ticket (#1) into #2; the request stays pending. */
+  async function startMerge(mocks: ReturnType<typeof makeClient>["mocks"]) {
+    const pending = deferred<{ ticket: Row }>();
+    mocks.merge.mockImplementationOnce(() => pending.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    const dialog = await screen.findByRole("dialog", { name: "Merge" });
+    fireEvent.change(
+      within(dialog).getByLabelText("Search by number or subject"),
+      { target: { value: "2" } },
+    );
+    fireEvent.click(
+      await within(dialog).findByRole("button", {
+        name: "Merge into #2: Printer jam",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes, merge" }));
+    await waitFor(() =>
+      expect(mocks.merge).toHaveBeenCalledWith({
+        sourceId: "t1",
+        targetId: "t2",
+      }),
+    );
+    return pending;
+  }
+
+  /** Bulk-deletes `number` from the queue; the request stays pending. */
+  async function startBulkDelete(
+    mocks: ReturnType<typeof makeClient>["mocks"],
+    number: number,
+  ) {
+    const pending = deferred<{ deleted: number }>();
+    mocks.delete.mockImplementationOnce(() => pending.promise);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: `Select ticket #${number}` }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: [`t${number}`] }),
+    );
+    return pending;
+  }
+
+  /** Opens a queue row (not the merge picker's button for the same ticket). */
+  const openRow = async (subject: string) => {
+    const row = screen
+      .getAllByRole("button", { name: new RegExp(subject) })
+      .find((button) => !button.closest('[role="dialog"]'));
+    if (!row) throw new Error(`no queue row for ${subject}`);
+    fireEvent.click(row);
+    await screen.findByRole("region", { name: subject });
+  };
+
+  const settle = async <T,>(
+    pending: ReturnType<typeof deferred<T>>,
+    value: Settled<T>,
+  ) => {
+    await act(async () => {
+      pending.settle(value);
+      await pending.promise;
+    });
+    // the continuation's own awaits (the queue refresh) settle too
+    await act(async () => {});
+    await act(async () => {});
+  };
+
+  it("a delete that settles after the agent opened another ticket keeps that ticket open", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket({}, { onTicketChange });
+    const pending = await startDelete(mocks);
+    onTicketChange.mockClear();
+    await openRow("Printer jam");
+    await settle(pending, { data: { deleted: 1 }, error: null });
+    expect(screen.getByRole("region", { name: "Printer jam" })).toBeTruthy();
+    expect(onTicketChange.mock.calls).toEqual([["t2"]]);
+  });
+
+  it("a merge that settles after the agent opened another ticket doesn't follow to the target", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket(mergeOptions, { onTicketChange });
+    const pending = await startMerge(mocks);
+    onTicketChange.mockClear();
+    await openRow("Refund needed");
+    await settle(pending, { data: { ticket: ticket(2) }, error: null });
+    expect(screen.getByRole("region", { name: "Refund needed" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Printer jam" })).toBeNull();
+    expect(onTicketChange.mock.calls).toEqual([["t3"]]);
+  });
+
+  it("a merge still follows to the target while its source is open", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket(mergeOptions, { onTicketChange });
+    const pending = await startMerge(mocks);
+    onTicketChange.mockClear();
+    await settle(pending, { data: { ticket: ticket(2) }, error: null });
+    await screen.findByRole("region", { name: "Printer jam" });
+    expect(onTicketChange.mock.calls).toEqual([["t2"]]);
+  });
+
+  it("a bulk delete that settles after the agent moved off the deleted ticket keeps the new one open", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket({}, { onTicketChange });
+    // t1 is open when the delete is confirmed
+    const pending = await startBulkDelete(mocks, 1);
+    onTicketChange.mockClear();
+    await openRow("Printer jam");
+    await settle(pending, { data: { deleted: 1 }, error: null });
+    expect(screen.getByRole("region", { name: "Printer jam" })).toBeTruthy();
+    expect(onTicketChange.mock.calls).toEqual([["t2"]]);
+  });
+
+  it("a bulk delete that settles after the agent opened the deleted ticket closes it", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openTicket({}, { onTicketChange });
+    // t1 is open when the delete of t3 is confirmed
+    const pending = await startBulkDelete(mocks, 3);
+    onTicketChange.mockClear();
+    await openRow("Refund needed");
+    await settle(pending, { data: { deleted: 1 }, error: null });
+    await waitFor(() => expect(screen.queryByRole("log")).toBeNull());
+    expect(onTicketChange.mock.calls).toEqual([["t3"], [null]]);
+  });
+
+  it("a delete that settles after unmount reports nothing", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks, unmount } = await openTicket({}, { onTicketChange });
+    const pending = await startDelete(mocks);
+    onTicketChange.mockClear();
+    unmount();
+    await settle(pending, { data: { deleted: 1 }, error: null });
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
+  it("a merge that settles after unmount reports nothing", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks, unmount } = await openTicket(mergeOptions, {
+      onTicketChange,
+    });
+    const pending = await startMerge(mocks);
+    onTicketChange.mockClear();
+    unmount();
+    await settle(pending, { data: { ticket: ticket(2) }, error: null });
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
+  it("a bulk delete that settles after unmount reports nothing", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks, unmount } = await openTicket({}, { onTicketChange });
+    const pending = await startBulkDelete(mocks, 1);
+    onTicketChange.mockClear();
+    unmount();
+    await settle(pending, { data: { deleted: 1 }, error: null });
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("class props", () => {
   it("className and the per-part class props reach their parts", async () => {
     const { container } = await openTicket(

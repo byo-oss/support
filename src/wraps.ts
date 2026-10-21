@@ -17,7 +17,7 @@ export type WrapsInboundS3Client = {
 };
 
 export type WrapsInboundOptions = {
-  /** The `X-Wraps-Inbound-Key` secret Wraps sends with each event. */
+  /** The `X-Wraps-Inbound-Key` secret Wraps sends with each event. No leading or trailing whitespace. */
   key: string;
   /** Bucket Wraps stores raw mail in. */
   bucket: string;
@@ -103,7 +103,8 @@ async function readBody(
  *
  * Takes the whole EventBridge event (what an API destination posts) or just
  * its `detail`. A body that isn't JSON, or has no `rawS3Key`, answers 400.
- * Throws at setup when `key` is empty.
+ * Throws at setup when `key` is empty or starts or ends with whitespace
+ * (header values arrive trimmed, so such a key could never match).
  *
  * The role needs `s3:GetObject` on the bucket, and `s3:ListBucket` too:
  * without it S3 reports a missing object as `AccessDenied`, which answers 502
@@ -121,6 +122,13 @@ export function wrapsInbound(
   const maxBytes = options.maxBytes ?? DEFAULT_INBOUND_MAX_BYTES;
   if (typeof key !== "string" || key.length === 0) {
     throw new Error("[@byo-oss/support] wrapsInbound needs a non-empty key");
+  }
+  // header values arrive trimmed, so a key with surrounding whitespace (a
+  // trailing newline from an env file) could never match: every event 401
+  if (key !== key.trim()) {
+    throw new Error(
+      "[@byo-oss/support] wrapsInbound key must not start or end with whitespace",
+    );
   }
   if (!Number.isInteger(maxBytes) || maxBytes < 1) {
     throw new Error(

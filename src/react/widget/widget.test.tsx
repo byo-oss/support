@@ -1341,6 +1341,64 @@ describe("SupportWidget onTicketChange", () => {
     expect(onTicketChange).not.toHaveBeenCalled();
   });
 
+  it("stays on the list when the user went Back before the create settled", async () => {
+    const onTicketChange = vi.fn();
+    type Created = Awaited<
+      ReturnType<typeof ok<{ ticket: ReturnType<typeof ticket> }>>
+    >;
+    let settle: (value: Created) => void = () => {};
+    const { mocks } = renderWidget({}, { variant: "inline", onTicketChange });
+    mocks.createTicket.mockImplementation(
+      () =>
+        new Promise<Created>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    await createFromForm();
+    await waitFor(() => expect(mocks.createTicket).toHaveBeenCalled());
+    // Back stays usable while the ticket is being created
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "My tickets" });
+    const listLoads = mocks.myTickets.mock.calls.length;
+    await act(async () => {
+      settle({ data: { ticket: ticket("late") }, error: null });
+    });
+    await act(async () => {});
+    expect(screen.getByRole("heading", { name: "My tickets" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Subject late/ })).toBeNull();
+    expect(mocks.ticket).not.toHaveBeenCalled();
+    expect(onTicketChange).not.toHaveBeenCalled();
+    // the list loads again, so the new ticket shows up there
+    expect(mocks.myTickets.mock.calls.length).toBeGreaterThan(listLoads);
+  });
+
+  it("a create that settles after Back and New again doesn't open it from the second form", async () => {
+    const onTicketChange = vi.fn();
+    type Created = Awaited<
+      ReturnType<typeof ok<{ ticket: ReturnType<typeof ticket> }>>
+    >;
+    let settle: (value: Created) => void = () => {};
+    const { mocks } = renderWidget({}, { variant: "inline", onTicketChange });
+    mocks.createTicket.mockImplementation(
+      () =>
+        new Promise<Created>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    await createFromForm();
+    await waitFor(() => expect(mocks.createTicket).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    await screen.findByLabelText("Subject");
+    await act(async () => {
+      settle({ data: { ticket: ticket("late") }, error: null });
+    });
+    await act(async () => {});
+    expect(screen.getByLabelText("Subject")).toBeTruthy();
+    expect(mocks.ticket).not.toHaveBeenCalled();
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
   it("inline: never reports changes from the ticketId prop, and null goes back to the list", async () => {
     const onTicketChange = vi.fn();
     const { client, mocks, rerender } = renderWidget(
@@ -1522,6 +1580,48 @@ describe("SupportWidget open state", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
 
     // the app opening it again shows the linked ticket
+    fireEvent.click(screen.getByRole("button", { name: "Email link" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await screen.findByRole("heading", { name: /Subject t2/ });
+  });
+  it("opens the linked ticket when the app opens the panel after declining a launcher click", async () => {
+    const { client } = makeClient({ detail: { ticket: ticket("t2") } });
+    let decline = false;
+    function Page() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Email link
+          </button>
+          <SupportWidget
+            client={client}
+            pollInterval={0}
+            badgePollInterval={0}
+            ticketId="t2"
+            open={open}
+            onOpenChange={(next) => {
+              if (next && decline) return; // the app says no
+              setOpen(next);
+            }}
+          />
+        </>
+      );
+    }
+    render(<Page />);
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("button", { name: /Subject t1/ });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // the launcher asks; the app keeps open={false}
+    decline = true;
+    fireEvent.click(trigger());
+    await act(async () => {});
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // later the app opens it itself: that shows the linked ticket
     fireEvent.click(screen.getByRole("button", { name: "Email link" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     await screen.findByRole("heading", { name: /Subject t2/ });

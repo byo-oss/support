@@ -27,7 +27,9 @@ export type SupportInboxProps = {
   /**
    * Called when the user changes the open ticket (selecting a row, Back, a
    * merge that moves to the target, deleting the open ticket) with its id,
-   * or `null` when no ticket is open. Sync your URL here.
+   * or `null` when no ticket is open. Sync your URL here. A merge or delete
+   * that settles after the user opened another ticket leaves that ticket
+   * open and reports nothing; nothing is reported after unmount.
    */
   onTicketChange?: (ticketId: string | null) => void;
   /** Poll interval in ms. 0 disables polling. @default 15000 */
@@ -111,9 +113,18 @@ export function SupportInbox({
   openIdRef.current = openId;
   const onTicketChangeRef = useRef(onTicketChange);
   onTicketChangeRef.current = onTicketChange;
+  // a delete or merge that settles after unmount (the agent navigated away)
+  // must not move the app's URL
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   /** A selection the user made: tell the app, so it can sync its URL. */
   const select = useCallback((id: string | null) => {
-    if (openIdRef.current === id) return;
+    if (!mounted.current || openIdRef.current === id) return;
     openIdRef.current = id;
     setOpenId(id);
     onTicketChangeRef.current?.(id);
@@ -164,8 +175,10 @@ export function SupportInbox({
         checked={checked}
         onCheckedChange={setChecked}
         onDeleted={(ids) => {
-          // a deleted ticket must not stay on screen with a live composer
-          if (openId !== null && ids.includes(openId)) select(null);
+          // a deleted ticket must not stay on screen with a live composer;
+          // read at resolve time: the agent may have opened another meanwhile
+          const open = openIdRef.current;
+          if (open !== null && ids.includes(open)) select(null);
         }}
         buttonClassName={buttonClassName}
         className={cx(
@@ -186,8 +199,15 @@ export function SupportInbox({
           onNavigate={onNavigate ?? defaultNavigate}
           renderMessage={renderMessage}
           onBack={() => select(null)}
-          onGone={() => select(null)}
-          onOpenTicket={select}
+          onGone={(id) => {
+            // only if the agent is still on it: they may have opened another
+            // ticket while the delete was in flight
+            if (openIdRef.current === id) select(null);
+          }}
+          onMerged={(sourceId, targetId) => {
+            // follow to the target only from the ticket that was merged
+            if (openIdRef.current === sourceId) select(targetId);
+          }}
           className={cx("flex-1", threadClassName)}
           messageClassName={messageClassName}
           composerClassName={composerClassName}

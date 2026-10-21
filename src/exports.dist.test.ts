@@ -6,6 +6,7 @@
 // matching text, so a provider name in a comment, a string or an error message
 // is not an import, and `import { x } from "y"` spread over lines is one.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -34,6 +35,15 @@ const packageOf = (specifier: string) => {
   const parts = specifier.split("/");
   return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 };
+
+/**
+ * A Node built-in, with or without `node:` (the build rewrites
+ * `node:dns/promises` to `dns/promises`): a browser bundle can't load it.
+ */
+const isNodeBuiltin = (specifier: string) =>
+  specifier.startsWith("node:") ||
+  builtinModules.includes(specifier) ||
+  builtinModules.includes(packageOf(specifier) ?? "");
 
 // ---------------------------------------------------------------------------
 // The scanner
@@ -236,6 +246,22 @@ describe("the scanner", () => {
       expect(isForbidden(miss), miss).toBe(false);
     }
   });
+
+  it("matches Node built-ins with and without node:, not packages", () => {
+    for (const hit of [
+      "dns",
+      "dns/promises",
+      "node:dns/promises",
+      "node:crypto",
+      "crypto",
+      "fs/promises",
+    ]) {
+      expect(isNodeBuiltin(hit), hit).toBe(true);
+    }
+    for (const miss of ["better-auth", "zod", "./chunk-X.js", "dnsjs"]) {
+      expect(isNodeBuiltin(miss), miss).toBe(false);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -299,6 +325,59 @@ describe("the root entry", () => {
 });
 
 describe("the client entry", () => {
+  const entries = () => scripts(".", /^client\.(?:js|cjs)$/);
+
+  it("has an ESM and a CJS build", () => {
+    expect(entries().map((file) => relative(dist, file))).toEqual([
+      "client.cjs",
+      "client.js",
+    ]);
+  });
+
+  // the ./client entry must load in a browser. Importing the root (or anything that
+  // reaches inbound/ or routes/) would pull in better-auth, zod and the
+  // lazy mail parsers, and fail here.
+  it("is browser-safe: no Node built-in, no provider, no package at all, only the statements chunk", () => {
+    for (const entry of entries()) {
+      const name = relative(root, entry);
+      const refs = reachable(entry);
+      expect(
+        refs
+          .filter(
+            (ref) => isNodeBuiltin(ref.specifier) || isForbidden(ref.specifier),
+          )
+          .map(describeRef),
+        name,
+      ).toEqual([]);
+      expect(
+        refs.filter((ref) => !isLocal(ref.specifier)).map(describeRef),
+        name,
+      ).toEqual([]);
+      // the local graph is the entry plus, at most, the chunk holding
+      // statements.ts, which imports nothing
+      const chunks = [
+        ...new Set(
+          refs
+            .filter((ref) => isLocal(ref.specifier))
+            .map((ref) =>
+              resolve(dirname(join(root, ref.file)), ref.specifier),
+            ),
+        ),
+      ];
+      expect(
+        chunks.length,
+        `${name} imports ${chunks.join(", ")}`,
+      ).toBeLessThanOrEqual(1);
+      for (const chunk of chunks) {
+        expect(relative(dist, chunk), name).toMatch(/^chunk-[\w-]+\.js$/);
+        const source = readFileSync(chunk, "utf8");
+        expect(referencesIn(relative(root, chunk), source), name).toEqual([]);
+        expect(source, name).toMatch(/\bsupportStatements\b/);
+        expect(source, name).toMatch(/\bsupportRoles\b/);
+      }
+    }
+  });
+
   it("references no provider SDK at all", () => {
     const entries = scripts(".", /^client\.(?:js|cjs)$/);
     expect(entries.length).toBeGreaterThan(0);

@@ -27,10 +27,16 @@ type ThreadPaneProps = {
     | undefined;
   /** Back to the queue (narrow layout). */
   onBack: () => void;
-  /** The ticket is gone (deleted). */
-  onGone: () => void;
-  /** Switch to another ticket (after a merge). */
-  onOpenTicket: (id: string) => void;
+  /**
+   * The ticket `id` is gone (deleted). Called after the request settles, so
+   * the parent checks it is still the open one.
+   */
+  onGone: (id: string) => void;
+  /**
+   * `sourceId` was merged into `targetId`. Called after the request settles,
+   * so the parent follows only if `sourceId` is still the open one.
+   */
+  onMerged: (sourceId: string, targetId: string) => void;
   className?: string | undefined;
   messageClassName?: string | undefined;
   composerClassName?: string | undefined;
@@ -49,7 +55,7 @@ export function ThreadPane({
   renderMessage,
   onBack,
   onGone,
-  onOpenTicket,
+  onMerged,
   className,
   messageClassName,
   composerClassName,
@@ -377,15 +383,17 @@ export function ThreadPane({
             onMerge={async (target) => {
               const merge = queue.merge;
               if (!merge) return false;
-              const merged = await merge(ticket.id, target.id);
+              const sourceId = ticket.id;
+              const merged = await merge(sourceId, target.id);
               if (!merged) return false;
-              onOpenTicket(merged.id);
+              onMerged(sourceId, merged.id);
               return true;
             }}
             onDelete={async () => {
-              const deleted = await queue.remove([ticket.id]);
+              const id = ticket.id;
+              const deleted = await queue.remove([id]);
               if (deleted === null) return false;
-              onGone();
+              onGone(id);
               return true;
             }}
             labels={labels}
