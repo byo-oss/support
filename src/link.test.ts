@@ -69,11 +69,10 @@ describe("linking (PRD #11)", () => {
     const { ticket, message } = await seedEmailTicket(auth);
     const context = await getContext(auth);
     // created already verified: only create.after runs
-    const user = await context.internalAdapter.createUser({
-      email: "  Pat@Example.TEST ",
-      name: "Pat",
-      emailVerified: true,
-    });
+    const user = await context.internalAdapter.createUser(
+      { email: "  Pat@Example.TEST ", name: "Pat", emailVerified: true },
+      { method: "email-password" },
+    );
 
     const linkedTicket = await ticketRow(rt, ticket.id);
     expect(linkedTicket.userId).toBe(user.id);

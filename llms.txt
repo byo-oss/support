@@ -4,7 +4,7 @@ Customer support as a better-auth plugin. Tickets, messages, internal notes, can
 
 ## Install & wire
 
-npm install @byo-oss/support   // optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
+npm install @byo-oss/support   // peer: better-auth ^1.7.7 (not 1.6); optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
 
 // lib/access.ts: spread the statements and grant them to staff roles. Import from /client (browser-safe; the root also exports them but loads mail parsing)
 import { createAccessControl } from "better-auth/plugins/access";

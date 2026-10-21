@@ -13,7 +13,7 @@ The API reference is `node_modules/@byo-oss/support/llms.txt` once the package i
 
 Work through these in order. Each step ends on a check; move on only when it holds.
 
-1. **Install.** `npm install @byo-oss/support` (use the repo's package manager). Add `@wraps.dev/email` only for `wrapsMailer`, and `@aws-sdk/client-s3` only for `s3Storage` or `wrapsInbound`. Done when it's in the dependencies of the package that holds the better-auth config, and of the web app if that's a separate package.
+1. **Install.** `npm install @byo-oss/support` (use the repo's package manager). It needs `better-auth` `^1.7.7`: upgrade an older better-auth first (1.6 is not supported). Add `@wraps.dev/email` only for `wrapsMailer`, and `@aws-sdk/client-s3` only for `s3Storage` or `wrapsInbound`. Done when it's in the dependencies of the package that holds the better-auth config (and of the web app if that's a separate package), and that package's `better-auth` resolves to 1.7.7 or newer.
 
 2. **Staff organization.** Staff are members of one organization. Use the existing one for the vendor's team or create it, and put its id in config (`SUPPORT_STAFF_ORGANIZATION_ID`). Done when you can name the organization id and its members.
 

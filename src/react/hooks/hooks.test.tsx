@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type SupportFetchClient,
@@ -124,6 +124,11 @@ function setVisibility(state: DocumentVisibilityState) {
 }
 
 afterEach(() => {
+  // Unmount first: without globals Testing Library doesn't clean up on its
+  // own, so every hook stays mounted and polling. The visibility event below
+  // would then start a refresh in each, whose state update React schedules
+  // after the file's environment is torn down ("window is not defined").
+  cleanup();
   vi.useRealTimers();
   setVisibility("visible");
 });

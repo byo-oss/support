@@ -17,9 +17,15 @@ const increment = (adapter: DBTransactionAdapter) =>
  * it with value 1; if that create fails because another request created the
  * row first (the unique `key`), increments once more. Call it with the base
  * adapter, outside any transaction: a failed insert aborts a Postgres
- * transaction. On an adapter without a native `incrementOne` the increment is
- * emulated, so callers treat a `number` unique conflict on the ticket insert
- * as "allocate again" (at most 3 times).
+ * transaction.
+ *
+ * The first-party adapters implement `incrementOne` natively and add 1 in
+ * the database, atomically. On an adapter without one, better-auth
+ * falls back to a compare-and-swap that also guards on the value it read, so
+ * it never hands out a number twice either; after 5 lost rounds it throws
+ * instead. The unique `number` on the ticket insert stays the backstop for an
+ * adapter whose `updateMany` doesn't check its `where` atomically: callers
+ * treat a conflict as "allocate again" (at most 3 times).
  */
 export async function allocateTicketNumber(
   adapter: DBTransactionAdapter,

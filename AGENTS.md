@@ -6,7 +6,7 @@ Customer support as a better-auth plugin: tickets, replies, internal notes, cann
 
 The same steps, with checks, ship as a skill: `skills/support-setup/SKILL.md`. Keep the two in step when setup changes.
 
-1. `npm install @byo-oss/support` (add `@wraps.dev/email` for `wrapsMailer`, `@aws-sdk/client-s3` for `s3Storage` and `wrapsInbound`).
+1. `npm install @byo-oss/support` (peer: `better-auth` `^1.7.7`; add `@wraps.dev/email` for `wrapsMailer`, `@aws-sdk/client-s3` for `s3Storage` and `wrapsInbound`).
 2. Server plugins, in this order: `organization({ ac, roles })` **then** `support({ staffOrganizationId })`. `support()` throws at boot without `organization()`, and migrations create tables in plugin order, so `organization()` must come first.
 3. Access control: import `supportStatements` and `supportRoles` from `@byo-oss/support/client` (browser-safe, for access files shared with the client), spread `supportStatements` into the app's `createAccessControl({ ...defaultStatements, ...supportStatements })` and add `supportRoles` to the staff roles (`ac.newRole({ ...ownerAc.statements, ...supportRoles.owner })`). Without it every agent endpoint answers `NOT_ALLOWED`. Agents are members of the staff organization (`staffOrganizationId`); a customer organization's owner is never an agent.
 4. Run the app's migration (`npx @better-auth/cli migrate`, or regenerate drizzle/prisma). Run it again after setting `mailer` (adds `supportDelivery`) or `attachments` (adds `supportAttachment`). When generating, the auth config the CLI loads must set `mailer` and `attachments` like production, or those tables are missing from the generated schema.

@@ -20,7 +20,7 @@ npm install @byo-oss/support
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer and `better-auth` `^1.6.23`. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20 or newer and `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 

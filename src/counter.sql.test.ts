@@ -100,7 +100,7 @@ describe.each([
     expect(await allocateTicketNumber(adapter)).toBe(3);
   });
 
-  it("refuses a duplicate ticket number (the backstop for emulated increments)", async () => {
+  it("refuses a duplicate ticket number (the backstop behind incrementOne)", async () => {
     harness = await createSqlTestAuth({}, { generateId });
     await insertTicket(harness.auth, { number: 1 });
     await expect(insertTicket(harness.auth, { number: 1 })).rejects.toThrow();
