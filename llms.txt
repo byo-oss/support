@@ -6,17 +6,17 @@ Customer support as a better-auth plugin. Tickets, messages, internal notes, can
 
 npm install @byo-oss/support   // optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
 
-// lib/access.ts: spread the statements and grant them to staff roles
+// lib/access.ts: spread the statements and grant them to staff roles. Import from /client (browser-safe; the root also exports them but loads mail parsing)
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access";
-import { supportRoles, supportStatements } from "@byo-oss/support";
+import { supportRoles, supportStatements } from "@byo-oss/support/client";
 export const ac = createAccessControl({ ...defaultStatements, ...supportStatements });
 export const roles = {
   owner: ac.newRole({ ...ownerAc.statements, ...supportRoles.owner }),
   admin: ac.newRole({ ...adminAc.statements, ...supportRoles.admin }),
   member: ac.newRole({ ...memberAc.statements, ...supportRoles.member }),
 };
-// support actions: read (queue, any ticket), reply (replies, notes), update (status, priority, assignee, tags, bulk, merge), manage (canned replies), delete (delete tickets). supportRoles: owner/admin all, member read+reply+update. Permissions are checked, never role names.
+// support actions: read (queue, any ticket), reply (replies, notes), update (status, priority, assignee, tags, bulk, merge), manage (canned replies), delete (delete tickets). supportRoles: owner/admin all, member read+reply+update; grant each role (custom ones too) only what its staff need. Roles apply in every org, but only staff-org members become agents. Permissions are checked, never role names.
 
 // server: lib/auth.ts. organization() MUST come before support(): tables are created in plugin order and supportTicket references organization.
 import { organization } from "better-auth/plugins/organization";
@@ -24,8 +24,8 @@ import { support } from "@byo-oss/support";
 export const auth = betterAuth({
   plugins: [organization({ ac, roles }), support({ staffOrganizationId: process.env.SUPPORT_STAFF_ORGANIZATION_ID })],
 });
-// Without organization(): boot throws ORGANIZATION_PLUGIN_REQUIRED. Without staffOrganizationId and authorize: one warning, every agent endpoint denies.
-// then: npx @better-auth/cli migrate  (supportTicket, supportCounter, supportTicketTag, supportMessage, supportCannedReply; + supportDelivery with mailer; + supportAttachment with attachments; rerun after enabling them)
+// Without organization(): boot throws ORGANIZATION_PLUGIN_REQUIRED. Without staffOrganizationId and authorize: one warning, every agent endpoint denies. staffOrganizationId: null = no agents on purpose, no warning.
+// then: npx @better-auth/cli migrate  (supportTicket, supportCounter, supportTicketTag, supportMessage, supportCannedReply; + supportDelivery with mailer; + supportAttachment with attachments; rerun after enabling them). With `generate` (drizzle/prisma) the CLI's auth config must pass mailer/attachments like production, or the generated schema lacks those tables.
 
 // client: lib/auth-client.ts
 import { supportClient } from "@byo-oss/support/client";
@@ -44,12 +44,12 @@ await auth.api.processSupportDeliveries({});   // server-only → { sent, skippe
 
 ## Options (support(options), all optional)
 
-staffOrganizationId: string                     // the vendor's staff org; agents are its members whose role has support actions
-authorize({ session, headers, organizationId, permissions }) => boolean  // default: staff-org member + organization plugin hasPermission; organizationId is always staffOrganizationId
-acceptSession({ session, headers, kind: "customer"|"agent" }) => boolean // default: refuse impersonated sessions; false → 403 SESSION_NOT_ACCEPTED
+staffOrganizationId: string | null | (() => string | null | undefined)  // the vendor's staff org; agents are its members whose role has support actions. Function: resolved per request. null: no agents, no boot warning
+authorize({ session, headers, organizationId, permissions }) => boolean  // default: staff-org member + organization plugin hasPermission; organizationId is always staffOrganizationId (resolved per request)
+acceptSession({ session, headers, kind: "customer"|"agent" }) => boolean // default: refuse impersonated sessions; false → 403 SESSION_NOT_ACCEPTED. Runs only once a session exists: an API key/bearer alone, with no plugin turning it into a session, is 401 before it. App guards that run before better-auth answer first: classify support's GET paths (my-tickets, ticket, attachment, agent/tickets, agent/ticket, agent/tags, agent/canned, agent/attachment; all else POST; map: supportPathMethods from /client)
 isAgent(userId) => boolean                      // who may be assigned or @mentioned; default: staff member with support:read; else NOT_AN_AGENT
 mailer: Mailer                                  // @byo-oss/mailer; needs email; adds supportDelivery
-email: { from, replyDomain, appUrl, ticketPath?: (id) => string /* default `/support/${id}` */, replyDelay?: number /* ms, 120000; 0 = at once */, requireVerifiedEmail?: boolean /* true */ }  // required with mailer and with inbound
+email: { from, replyDomain, appUrl, ticketPath?: (id) => string /* default `/support/${id}`; set it if that collides with your routes (e.g. top-level /:org) */, replyDelay?: number /* ms, 120000; 0 = at once */, requireVerifiedEmail?: boolean /* true */ }  // required with mailer and with inbound
 inbound: { source: SupportInboundSource, newTickets?: true, maxPerSenderPerHour?: 20, maxUnverifiedPerHour?: 100, maxBytes?: 26214400 }  // needs email
 attachments: { storage: SupportStorage, maxBytes?: 10485760, allowedTypes?: string[] }  // adds supportAttachment; HTML/SVG/XHTML refused at boot
 onEvent: (event: ByoEvent) => void | Promise<void>  // errors logged, never thrown
@@ -149,7 +149,7 @@ support({ onEvent: createEventBus([async (event): Promise<void> => { /* route */
 // support.agent.replied       userId requester   { ticketId, messageId, status }
 // support.note.added          no userId          { ticketId, messageId }
 // support.agent.mentioned     userId the agent (one event each) { ticketId, messageId, kind }
-// P2: staff ← created, customer.replied (auth.api.notify({ body: { organizationId: staffOrganizationId, roles, excludeUserIds: [actorId], type, title, href } })), assigned and mentioned (notify userId = event.userId); requester ← agent.replied (notify userId = event.userId). NEVER forward support.note.added to a customer.
+// P2: staff ← created, customer.replied: staff-org members whose role grants support:read (roles[name].authorize({ support: ["read"] }).success; never hard-coded role names), minus actorId, read at send time, auth.api.notify({ body: { userId, type, title, href } }) each (or the app's own notification layer); assigned and mentioned (notify userId = event.userId); requester ← agent.replied (notify userId = event.userId). NEVER forward support.note.added to a customer.
 
 ## Export
 
@@ -159,7 +159,7 @@ await exportSupportData(auth, { organizationId?, cursor?, limit: 100 })  // limi
 
 ## Schema (public contract; README lists every field)
 
-supportTicket: id, number (unique), subject, status, priority?, channel (web|email), userId? (→user, set null), requesterEmail?, requesterName?, organizationId? (→organization, cascade), visibility (private|organization), assigneeId? (→user, set null), rating? (good|bad), verified, mergedIntoId? (→supportTicket, set null), replyToken (unique), requesterSeenAt?, agentSeenAt?, lastMessageAt, solvedAt?, createdAt, updatedAt
+supportTicket: id, number (unique), subject, status, priority?, channel (web|email), userId? (→user, set null), requesterEmail?, requesterName?, organizationId? (→organization, cascade), visibility (private|organization), assigneeId? (→user, set null), rating? (good|bad), verified, mergedIntoId? (indexed, no foreign key; nulled in code when the target is deleted), replyToken (unique), requesterSeenAt?, agentSeenAt?, lastMessageAt, solvedAt?, createdAt, updatedAt
 supportCounter: id, key (unique, "ticket"), value
 supportTicketTag: id, ticketId (→supportTicket, cascade), tag
 supportMessage: id, ticketId (→supportTicket, cascade), kind (reply|note|event), authorType (customer|agent|system), userId? (→user, set null), authorEmail?, authorName?, body, data? (json, events: { type: status|assignee|priority|merged|attachment_dropped|followup_of, from?, to? }), mentions? (json string[]), emailMessageId? (unique), channel, verified, createdAt

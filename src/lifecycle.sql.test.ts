@@ -267,9 +267,18 @@ describe("lifecycle on PGlite", { timeout: 30_000 }, () => {
     async ({ organizationCleanup }) => {
       const s = await setup({ organizationCleanup });
       const orgId = s.world.customerOrg.id;
+      const target = await seedTicket(s, { organizationId: orgId });
       await seedTicket(s, { organizationId: orgId });
-      await seedTicket(s, { organizationId: orgId });
+      // a merge needs the same organization, so the merged source goes with
+      // the cascade too: no foreign key on mergedIntoId has to null it
+      await insertTicket(s.auth, {
+        organizationId: orgId,
+        mergedIntoId: target.ticket.id,
+      });
       const orgless = await seedTicket(s);
+      const orglessMerged = await insertTicket(s.auth, {
+        mergedIntoId: orgless.ticket.id,
+      });
 
       await s.auth.api.deleteOrganization({
         body: { organizationId: orgId },
@@ -277,7 +286,18 @@ describe("lifecycle on PGlite", { timeout: 30_000 }, () => {
       });
 
       const after = await snapshot(s);
-      expect(after.tickets.map((t) => t.id)).toEqual([orgless.ticket.id]);
+      expect(after.tickets.map((t) => t.id).sort()).toEqual(
+        [orgless.ticket.id, orglessMerged.id].sort(),
+      );
+      // nothing left points at a ticket that's gone
+      const ids = new Set(after.tickets.map((t) => t.id));
+      for (const ticket of after.tickets) {
+        if (ticket.mergedIntoId)
+          expect(ids.has(ticket.mergedIntoId)).toBe(true);
+      }
+      expect(after.ticket(orglessMerged.id)?.mergedIntoId).toBe(
+        orgless.ticket.id,
+      );
       expect(after.messages).toHaveLength(1);
       expect(after.tags).toHaveLength(1);
       expect(after.deliveries).toHaveLength(1);

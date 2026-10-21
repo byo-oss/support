@@ -82,7 +82,8 @@ export async function defaultAuthorize(
 
 /**
  * The default `isAgent`: `userId` is a member of `staffOrganizationId` whose
- * role has `support: ["read"]`. False without a staff org.
+ * role has `support: ["read"]`, resolved for this call. False without a
+ * staff org.
  */
 export async function defaultIsAgent(
   ctx: SupportEndpointContext,
@@ -91,7 +92,7 @@ export async function defaultIsAgent(
 ): Promise<boolean> {
   return memberHasPermission(ctx, {
     userId,
-    organizationId: opts.staffOrganizationId,
+    organizationId: opts.staffOrganizationId(),
     permissions: { support: ["read"] },
   });
 }
@@ -122,8 +123,9 @@ export async function checkSession(
 /**
  * Gate for every agent endpoint: `checkSession(ctx, opts, "agent")`, then
  * `opts.authorize` (or `defaultAuthorize`) with
- * `{ session, headers, organizationId: opts.staffOrganizationId, permissions: { support: actions } }`.
- * Denied: 403 `NOT_ALLOWED`. Returns the session.
+ * `{ session, headers, organizationId: opts.staffOrganizationId(), permissions: { support: actions } }`,
+ * the staff org resolved once per call. Denied: 403 `NOT_ALLOWED`. Returns
+ * the session.
  */
 export async function requireAgent(
   ctx: SupportEndpointContext,
@@ -136,7 +138,7 @@ export async function requireAgent(
     headers: ctx.headers ?? new Headers(),
     // always the staff org, never a ticket's: a customer org's owner is not
     // an agent on their own org's tickets
-    organizationId: opts.staffOrganizationId,
+    organizationId: opts.staffOrganizationId(),
     permissions: { support: Array.isArray(action) ? [...action] : [action] },
   };
   const allowed = opts.authorize

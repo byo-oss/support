@@ -55,9 +55,9 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    });
    ```
 
-   Without `staffOrganizationId` (and without your own `authorize`), every agent endpoint denies and the server logs one warning at boot.
+   Without `staffOrganizationId` (and without your own `authorize`), every agent endpoint denies and the server logs one warning at boot. Pass `staffOrganizationId: null` to run without agents on purpose (no warning). If the id is only known after boot, pass a function, `() => id | null | undefined`: it is called on every request that needs it.
 
-2. **Grant staff the `support` actions.** The organization plugin's default roles have none. Spread `supportStatements` into your access control and add `supportRoles` to the roles you create. Agents are members of the staff organization whose role has them; a customer organization's owner is never an agent.
+2. **Grant staff the `support` actions.** The organization plugin's default roles have none. Spread `supportStatements` into your access control and add `supportRoles` to the roles you create. Import both from `@byo-oss/support/client`: access files are often shared with browser code, and that entry loads none of the server's mail parsing (the root exports them too). Agents are members of the staff organization whose role has them; a customer organization's owner is never an agent.
 
    ```ts
    // lib/access.ts
@@ -68,7 +68,7 @@ Five steps give you customers opening and following tickets (in-app, with pollin
      memberAc,
      ownerAc,
    } from "better-auth/plugins/organization/access";
-   import { supportRoles, supportStatements } from "@byo-oss/support";
+   import { supportRoles, supportStatements } from "@byo-oss/support/client";
 
    export const ac = createAccessControl({ ...defaultStatements, ...supportStatements });
 
@@ -79,7 +79,7 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    };
    ```
 
-   `support` has five actions: `read` (the queue and any ticket), `reply` (agent replies and notes), `update` (status, priority, assignee, tags, bulk update, merge), `manage` (canned replies) and `delete` (delete tickets). `supportRoles` suggests `owner` and `admin` get all five and `member` gets `read`, `reply` and `update`. Support checks permissions, never role names.
+   `support` has five actions: `read` (the queue and any ticket), `reply` (agent replies and notes), `update` (status, priority, assignee, tags, bulk update, merge), `manage` (canned replies) and `delete` (delete tickets). `supportRoles` suggests `owner` and `admin` get all five and `member` gets `read`, `reply` and `update`; grant each role, custom roles included, only the actions its staff need. Roles apply in every organization, but support checks them only in the staff organization, so only that organization's members become agents: a customer organization's `owner` holding `support` actions in its own organization changes nothing. Support checks permissions, never role names.
 
 3. **Run the migration.** The plugin declares its tables; your existing better-auth workflow creates them:
 
@@ -98,6 +98,8 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    ```
 
    It adds `supportTicket`, `supportCounter`, `supportTicketTag`, `supportMessage` and `supportCannedReply`, plus `supportDelivery` once you set `mailer` and `supportAttachment` once you set `attachments` (run it again after you turn those on). Nothing is added to `user`, `organization` or `member`.
+
+   Because those two tables follow the options, a generated schema (drizzle or prisma through the better-auth CLI) only has them if the auth config the CLI loads passes `mailer` and `attachments` the way production does; a CLI-only config without them generates a schema that lacks them. No support table references itself, so the generated drizzle schema typechecks under `strict`.
 
 4. **Add the client plugin:**
 
@@ -144,11 +146,11 @@ Five steps give you customers opening and following tickets (in-app, with pollin
 
 Server code can open a ticket without the widget too: `await auth.api.createSupportTicket({ headers, body: { subject, body } })`.
 
-For a complete, runnable wiring, see the example app in [`examples/tanstack-start`](examples/tanstack-start): TanStack Start with better-auth on SQLite and an end-to-end suite. Run it with `pnpm install`, `pnpm migrate`, `pnpm seed` and `pnpm dev` from that directory (Node 22.13 or newer); its README has the details and the sign-ins.
+For a complete, runnable wiring, see the example app in [`examples/tanstack-start`](https://github.com/byo-oss/support/tree/main/examples/tanstack-start): TanStack Start with better-auth on SQLite and an end-to-end suite. Run it with `pnpm install`, `pnpm migrate`, `pnpm seed` and `pnpm dev` from that directory (Node 22.13 or newer); its README has the details and the sign-ins.
 
 ## For coding agents
 
-[`AGENTS.md`](AGENTS.md) has the install steps, rules and repo conventions, and [`llms.txt`](llms.txt) is the full usage reference. The same setup, with a check after each step, ships as a skill: [`skills/support-setup/SKILL.md`](skills/support-setup/SKILL.md).
+[`AGENTS.md`](https://github.com/byo-oss/support/blob/main/AGENTS.md) has the install steps, rules and repo conventions, and [`llms.txt`](llms.txt) is the full usage reference. The same setup, with a check after each step, ships as a skill: [`skills/support-setup/SKILL.md`](skills/support-setup/SKILL.md).
 
 ## Options
 
@@ -156,8 +158,8 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `staffOrganizationId` | string | | The vendor's staff organization. Agents are its members whose role has `support` actions |
-| `authorize` | `({ session, headers, organizationId, permissions }) => boolean \| Promise<boolean>` | staff-organization check | Replaces the permission check on every agent endpoint. `organizationId` is always `staffOrganizationId`, never a ticket's organization. `permissions` is e.g. `{ support: ["reply"] }` |
+| `staffOrganizationId` | string \| `null` \| `() => string \| null \| undefined` | | The vendor's staff organization. Agents are its members whose role has `support` actions. A function is called on every request that needs the id (the default `authorize` and `isAgent`, and the staff check when a member leaves). `null`: no agents, on purpose (a custom `authorize` still decides, with `organizationId` undefined); unset: the same plus one warning at boot |
+| `authorize` | `({ session, headers, organizationId, permissions }) => boolean \| Promise<boolean>` | staff-organization check | Replaces the permission check on every agent endpoint. `organizationId` is always `staffOrganizationId` (as resolved for the request), never a ticket's organization. `permissions` is e.g. `{ support: ["reply"] }` |
 | `acceptSession` | `({ session, headers, kind }) => boolean \| Promise<boolean>` | refuses impersonated sessions | Called first on every session endpoint; `kind` is `"customer"` or `"agent"`. `false` answers 403 `SESSION_NOT_ACCEPTED` |
 | `isAgent` | `(userId) => boolean \| Promise<boolean>` | member of the staff organization whose role has `support: ["read"]` | Who can be assigned a ticket or @mentioned. Anyone else is `NOT_AN_AGENT` |
 | `mailer` | `Mailer` | | Sends thread mail to requesters. Requires `email`. Unset: no outbound mail and no `supportDelivery` table |
@@ -165,7 +167,7 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 | `email.from` | string | required | Sender of thread mail, e.g. `"Acme Support <support@acme.com>"`. Mail from this address is dropped as a loop |
 | `email.replyDomain` | string | required | Replies go to `support+<token>@<replyDomain>`. A domain, not an address. Mail from any address on it is dropped as a loop |
 | `email.appUrl` | string | required | Your app's origin, for the ticket link in mail |
-| `email.ticketPath` | `(id) => string` | `` (id) => `/support/${id}` `` | Path of a ticket in your app |
+| `email.ticketPath` | `(id) => string` | `` (id) => `/support/${id}` `` | Path of a ticket in your app. Set it if the default could collide with your routes (a top-level `/:org` segment, for example) |
 | `email.replyDelay` | number (ms) | `120000` | Delay before an agent reply is mailed. Skipped if the requester saw the reply first. `0` sends at once; must be 0 or more |
 | `email.requireVerifiedEmail` | boolean | `true` | Mail account holders only at a verified address |
 | `inbound` | `{ source, newTickets?, maxPerSenderPerHour?, maxUnverifiedPerHour?, maxBytes? }` | | Receive email at `/support/inbound`. Requires `email` |
@@ -187,7 +189,7 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 | `pageSize` | number | `25` | Tickets per list page, 1 to 50 |
 | `schema` | | | Rename tables and fields |
 
-Boot validation throws a `[@byo-oss/support] …` error for: `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, an option that must be a whole number but isn't (or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`), and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
+Boot validation throws a `[@byo-oss/support] …` error for: a `staffOrganizationId` that isn't a string, `null` or a function, `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, an option that must be a whole number but isn't (or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`), and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
 
 ### Seed the staff organization
 
@@ -223,6 +225,10 @@ The owner role has every `support` action once step 2 is done. The other route i
   });
   ```
 
+  `acceptSession` only runs once a request has a session. An API key or bearer token on its own gives one only through a plugin that turns it into a session (better-auth's `bearer`, or API keys with sessions enabled); without such a plugin that request is unauthenticated and answered 401 before `acceptSession` runs, so a rule like the one above applies when the header arrives next to a session cookie or through such a plugin.
+
+  A guard of your own that runs before better-auth's handler (one that refuses impersonated sessions app-wide, say) answers support's requests first, so classify support's paths in it. The reads are `GET`, under your better-auth base path (`/api/auth` by default): `/support/my-tickets`, `/support/ticket`, `/support/attachment`, `/support/agent/tickets`, `/support/agent/ticket`, `/support/agent/tags`, `/support/agent/canned` and `/support/agent/attachment`. Every other support endpoint is `POST`. `supportPathMethods` from `@byo-oss/support/client` has the same map for code.
+
 - **What customers get back.** One serializer: ticket `id, number, subject, status, priority, channel, organizationId, visibility, rating, createdAt, updatedAt, lastMessageAt, solvedAt, unread, isRequester`; `isRequester` is false for an organization teammate viewing a shared ticket (the widget hides solve, reopen, rate and share for them; the server refuses those with 403); messages of kind `reply`, plus `event` rows of type `status` and `merged`. Never `replyToken`, `assigneeId`, `agentSeenAt`, `mentions`, notes, other events, `verified`, `emailMessageId` or internal attachments. Agents appear by `{ name, image }` only.
 - **Statuses.** A new ticket is `open`. An agent reply sets `pending` unless the request sets a `status`. A customer reply on `pending` or `solved` reopens it. The requester can solve (from `open` or `pending`) and reopen (from `solved`). Agents can set any status. The sweep closes `solved` tickets after `autoCloseAfter`. A `closed` ticket takes no replies (`TICKET_CLOSED`): mail to it opens a new ticket with a `followup_of` event.
 - **Merging.** An agent can merge a ticket into another with the same requester and the same organization (`MERGE_NOT_ALLOWED` otherwise). Messages, tags, attachments and deliveries move to the target; the stricter `visibility` (`private`) and `verified` (`false`) win, and the target keeps the later `lastMessageAt` of the two; the source is closed with `mergedIntoId`. Every endpoint that takes a ticket id follows `mergedIntoId`, with the access rule re-applied to the target, except `mergeSupportTickets` and `deleteSupportTickets`, which act on the ids given.
@@ -254,7 +260,7 @@ support({
 
 What gets sent:
 
-- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget ticketId={id} />`: with `ticketId` the widget starts open on that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Attachments go as that link, not as files.
+- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget ticketId={id} />`: with `ticketId` the widget starts open on that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Set `ticketPath` whenever the default `/support/<id>` could collide with your routes, for example a top-level `/:org` segment where `support` would be read as an organization slug. Attachments go as that link, not as files.
 - **The address** is resolved when the mail is sent: the account's email if verified (or any, with `requireVerifiedEmail: false`), else the account-less requester's `requesterEmail`. No address: the delivery is `skipped`.
 - **Delay.** A reply is due `replyDelay` after it was written (2 minutes by default) and skipped if the requester has seen the ticket since. With `replyDelay: 0` and better-auth's `advanced.backgroundTasks.handler` set, it sends inline; otherwise the sweep sends it.
 - **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known (`wrapsMailer` reports the SES id, not the header, so it stores none).
@@ -417,31 +423,44 @@ Support emits an event after every write that matters, through `onEvent`. Events
 
 Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`: consumers that fan out by organization must skip `visibility: "private"`.
 
-Wire them to [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) with `createEventBus` from `@byo-oss/core`:
+Wire them to [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) with `createEventBus` from `@byo-oss/core`. Staff recipients are the staff organization's members whose role grants `support: ["read"]`, read when the event is sent; derive them from your roles' permissions, never from a list of role names:
 
 ```ts
 import { createEventBus } from "@byo-oss/core";
+import { roles } from "./access"; // step 2
 
 const staffOrganizationId = process.env.SUPPORT_STAFF_ORGANIZATION_ID!;
+
+// staff-organization members whose role grants support:read, except the actor
+async function supportStaff(exceptUserId?: string | null): Promise<string[]> {
+  const ctx = await auth.$context;
+  const members = await ctx.adapter.findMany<{ userId: string; role: string }>({
+    model: "member",
+    where: [{ field: "organizationId", value: staffOrganizationId }],
+    limit: 1000,
+  });
+  const canRead = (role: string) =>
+    role
+      .split(",") // a member can hold several roles
+      .some((name) => roles[name.trim() as keyof typeof roles]?.authorize({ support: ["read"] }).success);
+  return members.filter((m) => canRead(m.role) && m.userId !== exceptUserId).map((m) => m.userId);
+}
 
 const onEvent = createEventBus([
   async (event): Promise<void> => {
     const ticketId = event.subject.id;
     switch (event.type) {
-      // staff: tell the team (every member except whoever caused the event)
+      // staff: everyone who can read the queue, except whoever caused the event
       case "support.ticket.created":
-      case "support.customer.replied":
-        await auth.api.notify({
-          body: {
-            organizationId: staffOrganizationId,
-            roles: ["owner", "admin", "member"], // roles that hold support actions
-            excludeUserIds: event.actorId ? [event.actorId] : [],
-            type: event.type,
-            title: event.type === "support.ticket.created" ? "New support ticket" : "Customer replied",
-            href: `/staff/support/${ticketId}`,
-          },
-        });
+      case "support.customer.replied": {
+        const title = event.type === "support.ticket.created" ? "New support ticket" : "Customer replied";
+        for (const userId of await supportStaff(event.actorId)) {
+          await auth.api.notify({
+            body: { userId, type: event.type, title, href: `/staff/support/${ticketId}` },
+          });
+        }
         break;
+      }
       // the one agent it is about
       case "support.agent.mentioned":
       case "support.ticket.assigned":
@@ -460,7 +479,7 @@ const onEvent = createEventBus([
       case "support.agent.replied":
         if (event.userId) {
           await auth.api.notify({
-            body: { userId: event.userId, type: event.type, title: "New reply to your ticket", href: `/support/${ticketId}` },
+            body: { userId: event.userId, type: event.type, title: "New reply to your ticket", href: `/help?ticket=${ticketId}` },
           });
         }
         break;
@@ -473,9 +492,11 @@ export const auth = betterAuth({
 });
 ```
 
+If you use dynamic access control, check the organization's stored roles the same way. If your app already has a notification layer (a catalog of notification types, preferences, digests), route support's events through it instead of calling `notify` directly; the recipient rules below stay the same.
+
 Which events go where:
 
-- **Staff:** `support.ticket.created`, `support.customer.replied`, `support.ticket.assigned` (to the new assignee) and `support.agent.mentioned` (to the mentioned agent). Notify only members of the staff organization; read members at send time, so a removed agent stops receiving them.
+- **Staff:** `support.ticket.created`, `support.customer.replied`, `support.ticket.assigned` (to the new assignee) and `support.agent.mentioned` (to the mentioned agent). Notify only members of the staff organization whose role grants `support` actions; read members at send time, so a removed agent stops receiving them.
 - **The requester:** `support.agent.replied`, and `support.ticket.status_changed` if you want to tell them a ticket was solved. Route by `event.userId`.
 - **Never to customers: `support.note.added`.** An internal note has its own event type so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId`; keep it that way in your handler, and send it to staff or nowhere.
 - With a `mailer`, the requester also gets the reply by email. Use the in-app notification as the nudge and leave the email to support.
@@ -581,7 +602,7 @@ These tables are a public contract: a change that breaks reading existing rows i
 | `assigneeId` | string → `user.id`, set null, optional | The assigned agent |
 | `rating` | string, optional | `good` or `bad`, set by the requester |
 | `verified` | boolean | `true` for web tickets; for email tickets, the creating message's DKIM result. A later append never flips it to `true`. Shown to agents only |
-| `mergedIntoId` | string → `supportTicket.id`, set null, optional | Set on a ticket merged into another |
+| `mergedIntoId` | string, optional | Set on a ticket merged into another: the target's `id`. Indexed, but no foreign key (better-auth's drizzle generator can't type a self-reference under `strict`); deleting the target through support nulls it, and an organization's delete takes both, since a merge needs the same organization |
 | `replyToken` | string, unique | 128-bit random token in the Reply-To address. Never returned by any endpoint or export |
 | `requesterSeenAt` | date, optional | When the requester last saw the ticket |
 | `agentSeenAt` | date, optional | When an agent last saw it |
@@ -748,6 +769,8 @@ DROP TABLE IF EXISTS "supportCannedReply";
 DROP TABLE IF EXISTS "supportTicket";
 DROP TABLE IF EXISTS "supportCounter";
 ```
+
+If your tables were generated with snake_case names (better-auth's drizzle generator does this unless the adapter is set to camelCase), drop `support_attachment`, `support_delivery`, `support_message`, `support_ticket_tag`, `support_canned_reply`, `support_ticket` and `support_counter` instead, in the same order, without quotes.
 
 `supportAttachment` and `supportDelivery` exist only if you used `attachments` and `mailer`; `IF EXISTS` covers both cases. No foreign key points at any support table from outside this list.
 

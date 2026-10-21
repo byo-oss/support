@@ -43,6 +43,9 @@ const orgPrefix = (organizationId: string) => `support/${organizationId}/`;
  * then `supportTicketTag`, then `supportTicket`, and nulls any `mergedIntoId`
  * pointing at a deleted ticket. Never relies on cascades. Returns the number
  * of tickets deleted.
+ *
+ * `mergedIntoId` has no foreign key on any adapter, so the null-out here is
+ * what keeps it from dangling, SQL included.
  */
 export async function deleteTickets(
   rt: SupportRuntime,
@@ -123,6 +126,8 @@ export async function deleteTickets(
       );
     }
     const removed = ids.filter((id) => !left.has(id));
+    // no foreign key does this (schema.ts): merged sources would keep
+    // pointing at a ticket that no longer exists
     await adapter.updateMany({
       model: "supportTicket",
       where: inIds("mergedIntoId", removed),
@@ -170,6 +175,12 @@ async function deleteOrganizationBlobs(
  * foreign keys) and always `storage.deletePrefix("support/<orgId>/")`, so it is
  * safe after the SQL cascade. Joins a caller's transaction
  * (`getCurrentAdapter`).
+ *
+ * After the SQL cascade there is nothing left here to null `mergedIntoId`
+ * on, and nothing needs it: a merge requires the same organization on both
+ * tickets (`mayMerge`) and no write ever changes a ticket's
+ * `organizationId`, so every ticket merged into one of the organization's
+ * tickets belongs to the organization too and went with the cascade.
  */
 export async function deleteOrganizationData(
   auth: AuthWithContext,
@@ -212,9 +223,11 @@ async function unassignStaffMember(
   { userId, organizationId }: { userId: string; organizationId: string },
 ): Promise<number> {
   // teammate access in a customer org is checked live, and requesters keep
-  // their own tickets, so only leaving the staff org changes anything
-  if (!rt.opts.staffOrganizationId) return 0;
-  if (organizationId !== rt.opts.staffOrganizationId) return 0;
+  // their own tickets, so only leaving the staff org changes anything.
+  // Resolved now: a function-valued `staffOrganizationId` may change
+  const staffOrganizationId = rt.opts.staffOrganizationId();
+  if (!staffOrganizationId) return 0;
+  if (organizationId !== staffOrganizationId) return 0;
   return clearMatching(
     rt,
     "supportTicket",

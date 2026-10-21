@@ -10,6 +10,8 @@ import {
 } from "./access";
 import { authRuntime, type UserSummary } from "./adapter";
 import { SUPPORT_ERROR_CODES } from "./error-codes";
+import { support } from "./index";
+import { deleteMemberData } from "./lifecycle";
 import type {
   SupportAuthorizeInput,
   SupportOptions,
@@ -262,6 +264,149 @@ describe("custom authorize", () => {
       organizationId: undefined,
       permissions: { support: ["read"] },
     });
+  });
+});
+
+describe("staffOrganizationId as a function or null", () => {
+  const DENY = "every agent endpoint will deny";
+
+  /** A better-auth logger that keeps support's "will deny" warnings. */
+  function warningLog() {
+    const warnings: string[] = [];
+    const logger = {
+      level: "warn" as const,
+      log: (level: string, message: string) => {
+        if (level === "warn" && message.includes(DENY)) warnings.push(message);
+      },
+    };
+    return { warnings, authOptions: { logger } };
+  }
+
+  it("resolves a function on every call: authorize, isAgent and the staff-member cleanup follow it", async () => {
+    let staff: string | null | undefined;
+    const resolver = vi.fn(() => staff);
+    const log = warningLog();
+    const auth = createTestAuth(
+      { staffOrganizationId: resolver },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    const owner = w.agents.owner;
+    const leaving = w.agents.member;
+    const { ctx, opts } = await gate(auth, owner.headers);
+    const leave = () =>
+      deleteMemberData(auth, {
+        userId: leaving.user.id,
+        organizationId: STAFF_ORG_ID,
+      });
+    // a function never warns: the id may only be known later
+    expect(log.warnings).toEqual([]);
+
+    // not known yet: like no staff org
+    await expect(asAgent(auth, owner, "read")).rejects.toEqual(notAllowed);
+    expect(await defaultIsAgent(ctx, opts, owner.user.id)).toBe(false);
+    const ticket = await insertTicket(auth, { assigneeId: leaving.user.id });
+    expect(await leave()).toEqual({ unassigned: 0 });
+
+    // known now: the same auth instance picks it up on the next call
+    staff = STAFF_ORG_ID;
+    await expect(asAgent(auth, owner, "delete")).resolves.toBeTruthy();
+    expect(await defaultIsAgent(ctx, opts, owner.user.id)).toBe(true);
+    expect(await leave()).toEqual({ unassigned: 1 });
+    const { adapter } = await getContext(auth);
+    const after = await adapter.findOne<SupportTicketRow>({
+      model: "supportTicket",
+      where: [{ field: "id", value: ticket.id }],
+    });
+    expect(after?.assigneeId ?? null).toBeNull();
+
+    // and null again: denied again
+    staff = null;
+    await expect(asAgent(auth, owner, "read")).rejects.toEqual(notAllowed);
+    expect(await defaultIsAgent(ctx, opts, owner.user.id)).toBe(false);
+    expect(resolver.mock.calls.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("passes the function's current value to a custom authorize", async () => {
+    let staff = "org_first";
+    const authorize = vi.fn((_input: SupportAuthorizeInput) => true);
+    const auth = createTestAuth({
+      staffOrganizationId: () => staff,
+      authorize,
+    });
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    await asAgent(auth, w.outsider, "read");
+    staff = "org_second";
+    await asAgent(auth, w.outsider, "read");
+    expect(authorize.mock.calls.map(([input]) => input.organizationId)).toEqual(
+      ["org_first", "org_second"],
+    );
+  });
+
+  it("null runs without agents: every agent check denies, nothing is unassigned, and nothing is logged", async () => {
+    const log = warningLog();
+    const auth = createTestAuth(
+      { staffOrganizationId: null },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    expect(log.warnings).toEqual([]);
+    for (const agent of [w.agents.owner, w.agents.admin, w.customer]) {
+      for (const action of ACTIONS) {
+        await expect(asAgent(auth, agent, action)).rejects.toEqual(notAllowed);
+      }
+    }
+    const { ctx, opts } = await gate(auth, w.agents.owner.headers);
+    expect(await defaultIsAgent(ctx, opts, w.agents.owner.user.id)).toBe(false);
+    await insertTicket(auth, { assigneeId: w.agents.member.user.id });
+    expect(
+      await deleteMemberData(auth, {
+        userId: w.agents.member.user.id,
+        organizationId: STAFF_ORG_ID,
+      }),
+    ).toEqual({ unassigned: 0 });
+  });
+
+  it("null still lets a custom authorize decide, with organizationId undefined", async () => {
+    const authorize = vi.fn((_input: SupportAuthorizeInput) => true);
+    const log = warningLog();
+    const auth = createTestAuth(
+      { staffOrganizationId: null, authorize },
+      { authOptions: log.authOptions },
+    );
+    const w = await seedSupportWorld(auth, STAFF_ORG_ID);
+    expect(log.warnings).toEqual([]);
+    await expect(asAgent(auth, w.outsider, "read")).resolves.toBeTruthy();
+    expect(authorize).toHaveBeenCalledTimes(1);
+    expect(authorize.mock.calls[0]?.[0]).toMatchObject({
+      organizationId: undefined,
+      permissions: { support: ["read"] },
+    });
+  });
+
+  it("warns at boot only when staffOrganizationId is left out (or empty) and there is no authorize", async () => {
+    const warningsFor = async (options: SupportOptions) => {
+      const log = warningLog();
+      await getContext(
+        createTestAuth(options, { authOptions: log.authOptions }),
+      );
+      return log.warnings.length;
+    };
+    expect(await warningsFor({})).toBe(1);
+    expect(await warningsFor({ staffOrganizationId: undefined })).toBe(1);
+    expect(await warningsFor({ staffOrganizationId: "" })).toBe(1);
+    expect(await warningsFor({ staffOrganizationId: null })).toBe(0);
+    expect(await warningsFor({ staffOrganizationId: () => undefined })).toBe(0);
+    expect(await warningsFor({ staffOrganizationId: STAFF_ORG_ID })).toBe(0);
+    expect(await warningsFor({ authorize: () => false })).toBe(0);
+  });
+
+  it("refuses any other type at boot", () => {
+    expect(() =>
+      support({ staffOrganizationId: 42 as unknown as string }),
+    ).toThrow(
+      "[@byo-oss/support] staffOrganizationId must be a string, null or a function",
+    );
   });
 });
 

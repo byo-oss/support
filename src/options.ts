@@ -75,7 +75,10 @@ export type SupportSession = {
 export type SupportAuthorizeInput = {
   session: SupportSession;
   headers: Headers;
-  /** Always `staffOrganizationId` (possibly undefined), never a ticket's org. */
+  /**
+   * Always `staffOrganizationId` as resolved for this request (undefined
+   * when there is none), never a ticket's org.
+   */
   organizationId?: string;
   /** e.g. `{ support: ["reply"] }`. */
   permissions: Record<string, string[]>;
@@ -152,9 +155,26 @@ export type SupportAttachmentOptions = {
   allowedTypes?: string[];
 };
 
+/**
+ * The staff organization's id; a function is called on every request that
+ * needs it (the default `authorize` and `isAgent`, and the staff check when a
+ * member leaves), for apps that look the id up after boot. `null`, or a
+ * function returning `null`/`undefined`: no staff organization.
+ */
+export type SupportStaffOrganizationId =
+  | string
+  | null
+  | (() => string | null | undefined);
+
 export type SupportOptions = {
-  /** The vendor's staff organization. Agents are members of it whose role has `support` actions. */
-  staffOrganizationId?: string;
+  /**
+   * The vendor's staff organization. Agents are members of it whose role has
+   * `support` actions. A function is resolved per request. `null` runs
+   * without agents on purpose: agent endpoints deny (unless `authorize`
+   * says otherwise) and nothing is logged. Unset: the same, plus one warning
+   * at boot.
+   */
+  staffOrganizationId?: SupportStaffOrganizationId;
   /** Replaces the default staff-org permission check (SPEC §4.3). */
   authorize?: SupportAuthorize;
   /** Which sessions may use support endpoints. @default refuse impersonated sessions */
@@ -228,7 +248,11 @@ export type SupportFeatures = {
 };
 
 export type ResolvedSupportOptions = {
-  staffOrganizationId: string | undefined;
+  /**
+   * The staff organization's id for this call: calls the app's function each
+   * time, and turns `null` and `""` into undefined. Never cache the result.
+   */
+  staffOrganizationId: () => string | undefined;
   /** The app's `authorize`, or undefined to use `defaultAuthorize` from `access.ts`. */
   authorize: SupportAuthorize | undefined;
   /** Always set: the app's, or `defaultAcceptSession`. */
@@ -361,6 +385,15 @@ export function resolveOptions(
   if (options.attachments && !options.attachments.storage) {
     fail("attachments needs storage (s3Storage(...) or memoryStorage())");
   }
+  const staff = options.staffOrganizationId;
+  if (
+    staff !== undefined &&
+    staff !== null &&
+    typeof staff !== "string" &&
+    typeof staff !== "function"
+  ) {
+    fail("staffOrganizationId must be a string, null or a function");
+  }
 
   let email: ResolvedEmailOptions | undefined;
   if (options.email) {
@@ -445,7 +478,8 @@ export function resolveOptions(
   if (pageSize > 50) fail(`pageSize can be at most 50, got ${pageSize}`);
 
   return {
-    staffOrganizationId: options.staffOrganizationId,
+    staffOrganizationId: () =>
+      (typeof staff === "function" ? staff() : staff) || undefined,
     authorize: options.authorize,
     acceptSession: options.acceptSession ?? defaultAcceptSession,
     isAgent: options.isAgent,

@@ -5,7 +5,7 @@ import {
   memberAc,
   ownerAc,
 } from "better-auth/plugins/organization/access";
-import { supportRoles, supportStatements } from "@byo-oss/support";
+import { supportRoles, supportStatements } from "@byo-oss/support/client";
 
 export const ac = createAccessControl({
   ...defaultStatements,

@@ -35,12 +35,10 @@ const supportTicket = {
     },
     rating: { type: "string", required: false },
     verified: { type: "boolean", required: true },
-    mergedIntoId: {
-      type: "string",
-      required: false,
-      index: true,
-      references: { model: "supportTicket", field: "id", onDelete: "set null" },
-    },
+    // No foreign key: a self-reference makes better-auth's drizzle generator
+    // emit an untyped `.references(() => supportTicket.id)`, which strict
+    // TypeScript refuses. "Deleting tickets" nulls it instead (lifecycle.ts).
+    mergedIntoId: { type: "string", required: false, index: true },
     replyToken: { type: "string", required: true, unique: true },
     requesterSeenAt: { type: "date", required: false },
     agentSeenAt: { type: "date", required: false },

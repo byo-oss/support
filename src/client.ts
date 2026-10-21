@@ -130,3 +130,10 @@ export type {
   CustomerMessage,
   CustomerTicket,
 } from "./serialize";
+// the access-control statements, here too so shared and browser access files
+// don't import the root (which loads the server's mail parsing)
+export {
+  type SupportAction,
+  supportRoles,
+  supportStatements,
+} from "./statements";

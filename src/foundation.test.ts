@@ -107,7 +107,7 @@ describe("schema", () => {
     );
   });
 
-  it("declares onDelete explicitly on every reference", () => {
+  it("declares onDelete explicitly on every reference, and no self-reference", () => {
     const references: Record<string, string> = {};
     for (const [model, { fields }] of Object.entries(fullSchema)) {
       for (const [field, attr] of Object.entries(fields)) {
@@ -121,7 +121,6 @@ describe("schema", () => {
       "supportTicket.userId": "user:set null",
       "supportTicket.organizationId": "organization:cascade",
       "supportTicket.assigneeId": "user:set null",
-      "supportTicket.mergedIntoId": "supportTicket:set null",
       "supportTicketTag.ticketId": "supportTicket:cascade",
       "supportMessage.ticketId": "supportTicket:cascade",
       "supportMessage.userId": "user:set null",
@@ -132,6 +131,10 @@ describe("schema", () => {
       "supportAttachment.messageId": "supportMessage:cascade",
       "supportAttachment.userId": "user:set null",
     });
+    // 12: `mergedIntoId` has none (better-auth's drizzle generator can't type
+    // a self-reference); "Deleting tickets" nulls it in code
+    expect(Object.keys(references)).toHaveLength(12);
+    expect(Object.keys(references)).not.toContain("supportTicket.mergedIntoId");
   });
 
   it("flags the indexed and unique fields", () => {
@@ -774,7 +777,7 @@ describe("runtime and seeders", () => {
       pageSize: 10,
     });
     const rt = await authRuntime(auth, "someFunction");
-    expect(rt.opts.staffOrganizationId).toBe(STAFF_ORG_ID);
+    expect(rt.opts.staffOrganizationId()).toBe(STAFF_ORG_ID);
     expect(rt.opts.pageSize).toBe(10);
     expect(rt.adapter).toBe((await getContext(auth)).adapter);
     const plain = betterAuth({ ...baseAuthOptions });

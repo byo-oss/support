@@ -45,9 +45,12 @@ export const support = (options: SupportOptions = {}) => {
           `[@byo-oss/support] ${SUPPORT_ERROR_CODES.ORGANIZATION_PLUGIN_REQUIRED.code}: add organization() to plugins; support's schema and staff model need it`,
         );
       }
-      if (!opts.staffOrganizationId && !opts.authorize) {
+      // the option as given: `null` (no agents on purpose) and a function
+      // (resolved per request) never warn
+      const staff = options.staffOrganizationId;
+      if ((staff === undefined || staff === "") && !opts.authorize) {
         context.logger.warn(
-          "[@byo-oss/support] no staffOrganizationId and no authorize: every agent endpoint will deny",
+          "[@byo-oss/support] no staffOrganizationId and no authorize: every agent endpoint will deny (pass staffOrganizationId: null to run without agents)",
         );
       }
       const link = userLinkHooks(context, opts);
@@ -126,6 +129,7 @@ export type {
   SupportIsAgent,
   SupportOptions,
   SupportSession,
+  SupportStaffOrganizationId,
   SupportStorage,
   SupportStoredObject,
 } from "./options";
