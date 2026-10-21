@@ -20,7 +20,7 @@ npm install @byo-oss/support
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer, `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20 or newer, `better-auth` `^1.7.7` (1.6 is not supported: its plugin API differs) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. An app still on zod 3 has to move to zod 4 first (npm stops with `ERESOLVE`). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 
@@ -369,14 +369,14 @@ support({
 });
 ```
 
-`wrapsMailer` is re-exported from `@byo-oss/mailer/wraps`; it sends through your own AWS SES account, and the sender must be verified there. Any object with `send(message)` is a `Mailer`: resolve `{ id, messageId? }`, throw to retry, throw `PermanentMailError` (from `@byo-oss/mailer`) for a send that can never succeed. Run `testMailer` from `@byo-oss/mailer/testing` against your own.
+`wrapsMailer` is re-exported from `@byo-oss/mailer/wraps`; it sends through your own AWS SES account, and the sender must be verified there. Any object with `send(message)` is a `Mailer`: resolve `{ id, messageId? }`, throw to retry, throw `PermanentMailError` (from `@byo-oss/mailer`) for a send that can never succeed. Run `testMailer` from `@byo-oss/mailer/testing` against your own. `@byo-oss/mailer` also has `sesMailer` (`@byo-oss/mailer/ses`, for an SES v2 client you already have) and `emailSdkMailer` (`@byo-oss/mailer/email-sdk`, for the providers behind email-sdk); to import those subpaths, add `@byo-oss/mailer` as a direct dependency (pnpm doesn't expose a dependency's dependencies).
 
 What gets sent:
 
 - **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget variant="inline" ticketId={id} />` (see [Deep links](#deep-links)): with `ticketId` the widget shows that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Set `ticketPath` whenever the default `/support/<id>` could collide with your routes, for example a top-level `/:org` segment where `support` would be read as an organization slug. Attachments go as that link, not as files.
 - **The address** is resolved when the mail is sent: the account's email if verified (or any, with `requireVerifiedEmail: false`), else the account-less requester's `requesterEmail`. No address: the delivery is `skipped`.
 - **Delay.** A reply is due `replyDelay` after it was written (2 minutes by default) and skipped if the requester has seen the ticket since. With `replyDelay: 0` and better-auth's `advanced.backgroundTasks.handler` set, it sends inline; otherwise the sweep sends it.
-- **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known (`wrapsMailer` reports the SES id, not the header, so it stores none).
+- **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known: inbound mail always stores one, and `wrapsMailer` or `sesMailer` sending through SES in us-east-1 reports the sent Message-ID, so your replies are threaded too. In other regions, or with a custom endpoint, they report none and replies thread by the token alone. `References` keeps the newest ids up to 900 characters (SES refuses a longer header) and leaves out ids that aren't printable ASCII.
 
 **Run the sweep on a schedule.** A plugin can't run jobs, so delayed mail, retries, auto-closing solved tickets and pruning stale uploads happen when you call `processSupportDeliveries` from your scheduler, every minute or so. Without it, delayed replies never go out and solved tickets never close (the sweep works without a `mailer` too):
 

@@ -162,20 +162,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@byo-oss/core': link:../byo-core
-  '@byo-oss/mailer': link:../byo-mailer
-
 importers:
 
   .:
     dependencies:
       '@byo-oss/core':
-        specifier: link:../byo-core
-        version: link:../byo-core
+        specifier: ^0.1.0
+        version: 0.1.0(better-auth@1.7.7(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7))))
       '@byo-oss/mailer':
-        specifier: link:../byo-mailer
-        version: link:../byo-mailer
+        specifier: ^0.1.0
+        version: 0.1.0(@aws-sdk/client-sesv2@3.1153.0)(@wraps.dev/email@0.15.0(react@19.3.1))(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7)))
       mailauth:
         specifier: ^8.0.1
         version: 8.0.1
@@ -529,6 +525,30 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@byo-oss/core@0.1.0':
+    resolution: {integrity: sha512-aS+cMqZmYSN6pibS/GusG0MhiUoS9o66DwhR+IQCrAgbRysc4jdq4yGB2gFY35CaAaDS90Ilebpt1Y1vCyp3Sw==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      better-auth: ^1.7.7
+
+  '@byo-oss/mailer@0.1.0':
+    resolution: {integrity: sha512-hkdyvOzvGpP1x7JRSQ99E6l6M+8SxdSx7zvQY9uxY2hhpph5pXMB6kzUaIBIQrUxXPxeH+J2Km5v5eZvtV8NMg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@aws-sdk/client-sesv2': ^3.527.0
+      '@opencoredev/email-sdk': ^3.0.0
+      '@wraps.dev/email': '>=0.15.0'
+      vitest: '>=3'
+    peerDependenciesMeta:
+      '@aws-sdk/client-sesv2':
+        optional: true
+      '@opencoredev/email-sdk':
+        optional: true
+      '@wraps.dev/email':
+        optional: true
+      vitest:
+        optional: true
 
   '@byo-oss/notifications@0.8.1':
     resolution: {integrity: sha512-9vAvCfu6yNvFbWa2z9FayHj9y1Xe6j9qjHEAeotFwnxvpD/gABNW8LLdrERVbN2cSuiTdkDqf88IVOTCrOmXrw==}
@@ -2672,6 +2692,16 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.5.15':
     optional: true
+
+  '@byo-oss/core@0.1.0(better-auth@1.7.7(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7))))':
+    dependencies:
+      better-auth: 1.7.7(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7)))
+
+  '@byo-oss/mailer@0.1.0(@aws-sdk/client-sesv2@3.1153.0)(@wraps.dev/email@0.15.0(react@19.3.1))(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7)))':
+    optionalDependencies:
+      '@aws-sdk/client-sesv2': 3.1153.0
+      '@wraps.dev/email': 0.15.0(react@19.3.1)
+      vitest: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7))
 
   '@byo-oss/notifications@0.8.1(@wraps.dev/email@0.15.0(react@19.3.1))(better-auth@1.7.7(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7))))(react@19.3.1)(vitest@4.1.12(@types/node@22.20.5)(happy-dom@21.0.3)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7)))':
     dependencies:

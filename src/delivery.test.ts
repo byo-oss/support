@@ -343,6 +343,63 @@ describe("runSweep: sending", () => {
     expect(Object.keys(two?.headers ?? {})).not.toContain("Reply-To");
   });
 
+  it("keeps References under SES's header limit and leaves out ids SES refuses", async () => {
+    const mailer = memoryMailer();
+    const { rt } = await setup({ mailer });
+    // long but legal ids, as other mail systems write them (255 at most)
+    const long = (n: number) =>
+      `<${String(n).padStart(3, "0")}.${"x".repeat(230)}@example.test>`;
+    let { ticket } = await createTicket(rt, {
+      subject: "Long ids",
+      body: "Hi",
+      channel: "email",
+      requesterEmail: "guest@example.test",
+      verified: true,
+      emailMessageId: long(0),
+      actorId: null,
+    });
+    for (let n = 1; n <= 5; n += 1) {
+      await tick();
+      ({ ticket } = await addMessage(rt, {
+        ticket,
+        kind: "reply",
+        authorType: "customer",
+        authorEmail: "guest@example.test",
+        body: `More ${n}`,
+        channel: "email",
+        verified: true,
+        emailMessageId: long(n),
+        actorId: null,
+      }));
+    }
+    await tick();
+    // RFC 6532 mail can carry a non-ASCII Message-ID; SES refuses it in a header
+    ({ ticket } = await addMessage(rt, {
+      ticket,
+      kind: "reply",
+      authorType: "customer",
+      authorEmail: "guest@example.test",
+      body: "Unicode id",
+      channel: "email",
+      verified: true,
+      emailMessageId: "<résumé@exämple.test>",
+      actorId: null,
+    }));
+    await tick();
+    await agentPost(rt, ticket, { body: "Answer" });
+    await runSweep(rt, later(DELAY + 1_000));
+
+    const [mail] = mailer.sent;
+    const headers = mail?.headers ?? {};
+    expect(headers["In-Reply-To"]).toBe(long(5));
+    const refs = headers.References ?? "";
+    expect(refs.length).toBeLessThanOrEqual(900);
+    expect(`References: ${refs}`.length).toBeLessThanOrEqual(996);
+    // newest kept, oldest dropped first, the unicode id never listed
+    expect(refs.split(" ")).toEqual([long(3), long(4), long(5)]);
+    expect(refs).not.toContain("résumé");
+  });
+
   it("leaves emailMessageId null when the mailer reports none", async () => {
     const { auth, rt } = await setup();
     const { ticket } = await webTicket(auth, rt);

@@ -43,6 +43,14 @@ const CONCURRENCY = 10;
 const THREAD_LOOKBACK = 100;
 /** Message-IDs listed in `References`, newest kept. */
 const MAX_REFERENCES = 10;
+/**
+ * Longest `References` value sent. SES refuses a header over 995 characters
+ * (996 with the name), and that refusal is permanent, so a thread of long
+ * customer Message-IDs would fail every later reply on the ticket.
+ */
+const MAX_REFERENCES_LENGTH = 900;
+/** A Message-ID SES accepts in a header: printable ASCII, no spaces, at most 255. */
+const HEADER_SAFE_ID = /^<[\x21-\x7e]{1,253}>$/;
 
 type Outcome = "sent" | "skipped" | "retrying" | "failed";
 type DeliveryData = Omit<SupportDeliveryRow, "id">;
@@ -393,8 +401,9 @@ const bracketed = (id: string) => {
 
 /**
  * `In-Reply-To` (the newest stored Message-ID before this message) and
- * `References` (up to the last 10, oldest first), or undefined when the
- * thread has none.
+ * `References` (up to the last 10, oldest first, at most 900 characters,
+ * dropping the oldest first), or undefined when the thread has none. A stored
+ * id that isn't printable ASCII (RFC 6532 mail) is left out: SES refuses it.
  */
 async function threadHeaders(
   rt: SupportRuntime,
@@ -409,14 +418,21 @@ async function threadHeaders(
     sortBy: { field: "createdAt", direction: "desc" },
     limit: THREAD_LOOKBACK,
   });
-  const ids = recent
-    .filter((m) => m.id !== message.id && m.emailMessageId)
-    .slice(0, MAX_REFERENCES)
-    .map((m) => bracketed(m.emailMessageId as string))
-    .reverse();
-  const last = ids.at(-1);
+  const newestFirst: string[] = [];
+  let length = 0;
+  for (const m of recent) {
+    if (m.id === message.id || !m.emailMessageId) continue;
+    const id = bracketed(m.emailMessageId);
+    if (!HEADER_SAFE_ID.test(id)) continue;
+    const added = newestFirst.length === 0 ? id.length : id.length + 1;
+    if (length + added > MAX_REFERENCES_LENGTH) break;
+    newestFirst.push(id);
+    length += added;
+    if (newestFirst.length === MAX_REFERENCES) break;
+  }
+  const last = newestFirst[0];
   if (!last) return undefined;
-  return { "In-Reply-To": last, References: ids.join(" ") };
+  return { "In-Reply-To": last, References: newestFirst.reverse().join(" ") };
 }
 
 const HTML_ESCAPES: Record<string, string> = {
