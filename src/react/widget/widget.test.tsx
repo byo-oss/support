@@ -36,6 +36,7 @@ function ticket(id: string, extra: Record<string, unknown> = {}) {
     lastMessageAt: NOW,
     solvedAt: null,
     unread: false,
+    isRequester: true,
     ...extra,
   };
 }
@@ -503,6 +504,51 @@ describe("SupportWidget thread", () => {
         visibility: "private",
       }),
     );
+  });
+
+  it("hides solve, reopen, rate and share from a teammate, and shows them to the requester", async () => {
+    for (const status of ["open", "solved"]) {
+      const teammate = renderWidget({
+        detail: {
+          ticket: ticket("t1", {
+            status,
+            organizationId: "org1",
+            visibility: "organization",
+            isRequester: false,
+          }),
+        },
+      });
+      await openThread();
+      expect(screen.getByLabelText("Reply")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Mark solved" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Good" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Bad" })).toBeNull();
+      expect(screen.queryByLabelText("Share with my organization")).toBeNull();
+      expect(teammate.mocks.updateMine).not.toHaveBeenCalled();
+      cleanup();
+
+      renderWidget({
+        detail: {
+          ticket: ticket("t1", {
+            status,
+            organizationId: "org1",
+            visibility: "organization",
+            isRequester: true,
+          }),
+        },
+      });
+      await openThread();
+      expect(
+        screen.getByRole("button", {
+          name: status === "open" ? "Mark solved" : "Reopen",
+        }),
+      ).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Good" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Bad" })).toBeTruthy();
+      expect(screen.getByLabelText("Share with my organization")).toBeTruthy();
+      cleanup();
+    }
   });
 
   it("hides the share toggle on a ticket with no organization", async () => {

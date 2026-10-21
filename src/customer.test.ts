@@ -260,6 +260,7 @@ describe("createSupportTicket (J1)", () => {
       rating: null,
       solvedAt: null,
       unread: false,
+      isRequester: true,
     });
     expect(ticket.number).toBeGreaterThan(0);
     const stored = await row(ticket.id);
@@ -395,6 +396,14 @@ describe("listMySupportTickets (J1)", () => {
     // teammates never see a ticket as unread
     const sharedForTeammate = theirs.tickets.find((t) => t.id === shared.id);
     expect(sharedForTeammate?.unread).toBe(false);
+    // and not the requester, unlike the owner's own view of the same ticket
+    expect(sharedForTeammate?.isRequester).toBe(false);
+    expect(mine.tickets.find((t) => t.id === shared.id)?.isRequester).toBe(
+      true,
+    );
+    expect(
+      mine.tickets.find((t) => t.id === teammateShared.id)?.isRequester,
+    ).toBe(false);
 
     expect((await list(w.outsider)).tickets).toEqual([]);
     expect(mine.nextCursor).toBeNull();
@@ -973,6 +982,7 @@ describe("customer responses never carry hidden fields", () => {
         "lastMessageAt",
         "solvedAt",
         "unread",
+        "isRequester",
       ].sort(),
     );
   });

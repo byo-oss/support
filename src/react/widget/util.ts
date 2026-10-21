@@ -32,21 +32,11 @@ function stripUndefined<T extends object>(value: T | undefined): Partial<T> {
 
 /**
  * Whether to offer the requester-only actions (solve, reopen, rate, share).
- *
- * The customer ticket does not say whether the viewer is its requester or an
- * organization teammate: private tickets are only ever visible to the
- * requester, and `unread` is only ever true for the requester, but an
- * already-read ticket shared with an organization could be either. The
- * actions stay available there, because the requester must be able to
- * unshare, solve and rate; a teammate's attempt is refused by the server and
- * shown as an error. This is the single place to narrow once the wire ticket
- * carries a viewer-is-requester flag.
+ * An organization teammate viewing a shared ticket is not its requester, and
+ * the server refuses those actions for them.
  */
-export function canActAsRequester(_ticket: {
-  visibility: "private" | "organization";
-  unread: boolean;
-}): boolean {
-  return true;
+export function canActAsRequester(ticket: { isRequester: boolean }): boolean {
+  return ticket.isRequester;
 }
 
 export const MAX_ATTACHMENTS = 10;

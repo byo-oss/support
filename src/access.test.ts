@@ -593,6 +593,7 @@ const CUSTOMER_TICKET_KEYS = [
   "channel",
   "createdAt",
   "id",
+  "isRequester",
   "lastMessageAt",
   "number",
   "organizationId",
@@ -704,7 +705,18 @@ describe("customer serializer", () => {
       lastMessageAt: t1,
       solvedAt: t2,
       unread: true,
+      isRequester: true,
     });
+  });
+
+  it("flags the requester, and not a teammate on a shared ticket", () => {
+    expect(toCustomerTicket(fullTicket(), "u_req").isRequester).toBe(true);
+    expect(toCustomerTicket(fullTicket(), "u_teammate").isRequester).toBe(
+      false,
+    );
+    expect(
+      toCustomerTicket(fullTicket({ userId: null }), "u_teammate").isRequester,
+    ).toBe(false);
   });
 
   it("is unread only for the requester with an older or missing seen mark", () => {

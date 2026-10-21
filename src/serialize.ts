@@ -31,6 +31,8 @@ export type CustomerTicket = {
   solvedAt: Date | null;
   /** The viewer is the requester and has not seen the latest reply. Always false for teammates. */
   unread: boolean;
+  /** The viewer is the ticket's requester, not an organization teammate. Requester-only actions (solve, reopen, rate, share) are refused for teammates. */
+  isRequester: boolean;
 };
 
 /**
@@ -121,7 +123,7 @@ const CUSTOMER_EVENT_TYPES: ReadonlySet<SupportEventData["type"]> = new Set([
 /**
  * The customer view of a ticket. `viewerId` decides `unread`: true only when
  * the viewer is the requester and `requesterSeenAt` is null or older than
- * `lastMessageAt`.
+ * `lastMessageAt`. `isRequester` is true iff the viewer is the requester.
  */
 export function toCustomerTicket(
   row: SupportTicketRow,
@@ -143,6 +145,7 @@ export function toCustomerTicket(
     lastMessageAt: row.lastMessageAt,
     solvedAt: row.solvedAt ?? null,
     unread: isRequester && seenBefore(row.requesterSeenAt, row.lastMessageAt),
+    isRequester,
   };
 }
 
