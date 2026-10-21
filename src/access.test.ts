@@ -460,14 +460,26 @@ describe("staffOrganizationId as a function or null", () => {
     expect(log.errors).toHaveLength(1);
   });
 
-  it("an async function's Promise is never used as the id: no staff org, logged once, a rejection never unhandled", async () => {
+  it("refuses a native async function at boot", () => {
+    expect(() =>
+      support({
+        staffOrganizationId: (async () =>
+          STAFF_ORG_ID) as unknown as () => string,
+      }),
+    ).toThrow(
+      "[@byo-oss/support] staffOrganizationId must be synchronous, not an async function: look the id up at boot and pass () => id",
+    );
+  });
+
+  it("a returned Promise is never used as the id: no staff org, logged once, a rejection never unhandled", async () => {
     const log = errorLog();
     const authorize = vi.fn((_input: SupportAuthorizeInput) => false);
     const auth = createTestAuth(
       {
-        // the type says sync; an app can still pass an async function
-        staffOrganizationId: (async () =>
-          STAFF_ORG_ID) as unknown as () => string,
+        // the type says sync; a plain function can still return a Promise
+        // (a native async function is refused at boot)
+        staffOrganizationId: (() =>
+          Promise.resolve(STAFF_ORG_ID)) as unknown as () => string,
         authorize,
       },
       { authOptions: log.authOptions },
@@ -490,9 +502,10 @@ describe("staffOrganizationId as a function or null", () => {
     // one that rejects: handled here, so no unhandled rejection fails the run
     const rejecting = createTestAuth(
       {
-        staffOrganizationId: (async () => {
-          throw new Error("async lookup failed");
-        }) as unknown as () => string,
+        staffOrganizationId: (() =>
+          Promise.reject(
+            new Error("async lookup failed"),
+          )) as unknown as () => string,
       },
       { authOptions: errorLog().authOptions },
     );

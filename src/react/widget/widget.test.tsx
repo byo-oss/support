@@ -8,7 +8,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupportFetchClient } from "../hooks";
 import { defaultLabels } from "../labels";
@@ -1314,6 +1314,39 @@ describe("SupportWidget onTicketChange", () => {
     await createFromForm();
     await waitFor(() => expect(onTicketChange).toHaveBeenLastCalledWith("new"));
     expect(onTicketChange).toHaveBeenCalledTimes(4);
+  });
+
+  it("a move that lands before the re-render after a ticketId change compares with the new ticket", async () => {
+    // React runs a later sibling's effects in the same flush as the widget's
+    // ticketId effect, before the re-render that effect schedules. A click
+    // on the list row there must already see the thread the prop opened:
+    // opening it again is no change and reports nothing
+    const onTicketChange = vi.fn();
+    const { client } = makeClient({ detail: { ticket: ticket("t2") } });
+    function OpenOnChange({ id }: { id: string | null }) {
+      useEffect(() => {
+        if (id !== "t2") return;
+        screen.getByRole("button", { name: /Subject t2/ }).click();
+      }, [id]);
+      return null;
+    }
+    const ui = (id: string | null) => (
+      <>
+        <SupportWidget
+          client={client}
+          variant="inline"
+          pollInterval={0}
+          ticketId={id}
+          onTicketChange={onTicketChange}
+        />
+        <OpenOnChange id={id} />
+      </>
+    );
+    const { rerender } = render(ui(null));
+    await screen.findByRole("button", { name: /Subject t2/ });
+    rerender(ui("t2"));
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(onTicketChange).not.toHaveBeenCalled();
   });
 
   it("does not report a ticket created after the widget unmounted", async () => {

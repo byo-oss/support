@@ -169,10 +169,10 @@ export type SupportAttachmentOptions = {
  * member leaves), for apps that look the id up after boot. `null`, or a
  * function returning `null`/`undefined`: no staff organization.
  *
- * A function must be synchronous and must not throw: one that throws or
- * returns anything but a string, `null` or `undefined` (a Promise from an
- * `async` function, say) counts as no staff organization for that call, and
- * the first time it happens is logged as an error.
+ * A function must be synchronous and must not throw: an `async` function is
+ * refused at boot, and one that throws or returns anything but a string,
+ * `null` or `undefined` (a Promise, say) counts as no staff organization for
+ * that call, and the first time it happens is logged as an error.
  */
 export type SupportStaffOrganizationId =
   | string
@@ -183,10 +183,11 @@ export type SupportOptions = {
   /**
    * The vendor's staff organization. Agents are members of it whose role has
    * `support` actions. A function is resolved per request; it must be
-   * synchronous and must not throw (otherwise: no staff organization for that
-   * call, logged once). `null` runs without agents on purpose: agent
-   * endpoints deny (unless `authorize` says otherwise) and nothing is
-   * logged. Unset: the same, plus one warning at boot.
+   * synchronous and must not throw (an `async` function is refused at boot;
+   * otherwise: no staff organization for that call, logged once). `null`
+   * runs without agents on purpose: agent endpoints deny (unless `authorize`
+   * says otherwise) and nothing is logged. Unset: the same, plus one warning
+   * at boot.
    *
    * With `null` (or no staff organization) and a custom `authorize`, pass
    * `isAgent` too: the default `isAgent` looks in the staff organization, so
@@ -424,6 +425,16 @@ export function resolveOptions(
   ) {
     fail("staffOrganizationId must be a string, null or a function");
   }
+  // a native async function always returns a Promise, never the id: refuse
+  // it here; other thenables are caught per request below
+  if (
+    typeof staff === "function" &&
+    Object.prototype.toString.call(staff) === "[object AsyncFunction]"
+  ) {
+    fail(
+      "staffOrganizationId must be synchronous, not an async function: look the id up at boot and pass () => id",
+    );
+  }
 
   let email: ResolvedEmailOptions | undefined;
   if (options.email) {
@@ -509,8 +520,9 @@ export function resolveOptions(
   if (pageSize > 50) fail(`pageSize can be at most 50, got ${pageSize}`);
 
   // a function is the app's code, called per request: one that throws or
-  // returns a non-string (an async function's Promise) means no staff org
-  // for that call, never a 500 or a Promise used as an id. Logged once.
+  // returns a non-string (a Promise from a non-async function) means no
+  // staff org for that call, never a 500 or a Promise used as an id. Logged
+  // once.
   let staffMisuseLogged = false;
   const staffMisuse = (message: string, error?: unknown) => {
     if (staffMisuseLogged) return;

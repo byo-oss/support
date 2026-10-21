@@ -28,15 +28,24 @@ type ThreadPaneProps = {
   /** Back to the queue (narrow layout). */
   onBack: () => void;
   /**
-   * The ticket `id` is gone (deleted). Called after the request settles, so
-   * the parent checks it is still the open one.
+   * The ticket shown was deleted. `id` is the open id the pane was mounted
+   * for (`ticketId`), not the merge-resolved `ticket.id` it shows. Called
+   * after the request settles, so the parent checks it is still the open one.
    */
   onGone: (id: string) => void;
   /**
-   * `sourceId` was merged into `targetId`. Called after the request settles,
-   * so the parent follows only if `sourceId` is still the open one.
+   * The ticket shown was merged into `targetId`. `sourceId` is the open id
+   * the pane was mounted for (`ticketId`), not the merge-resolved `ticket.id`
+   * it shows. Called after the request settles, so the parent follows only
+   * if `sourceId` is still the open one.
    */
   onMerged: (sourceId: string, targetId: string) => void;
+  /**
+   * The ticket the server answered for `openId` (`ticket.id`, which differs
+   * from `openId` when that ticket was merged), so the parent can tell a
+   * bulk delete of the shown ticket from one of another.
+   */
+  onResolved: (openId: string, id: string) => void;
   className?: string | undefined;
   messageClassName?: string | undefined;
   composerClassName?: string | undefined;
@@ -56,6 +65,7 @@ export function ThreadPane({
   onBack,
   onGone,
   onMerged,
+  onResolved,
   className,
   messageClassName,
   composerClassName,
@@ -65,6 +75,10 @@ export function ThreadPane({
     ...(pollInterval !== undefined ? { pollInterval } : {}),
   });
   const { ticket, messages } = thread;
+  const resolvedId = ticket?.id ?? null;
+  useEffect(() => {
+    if (resolvedId !== null) onResolved(ticketId, resolvedId);
+  }, [ticketId, resolvedId, onResolved]);
   const [sendFailed, setSendFailed] = useState(false);
   const refreshQueue = queue.refresh;
 
@@ -383,17 +397,17 @@ export function ThreadPane({
             onMerge={async (target) => {
               const merge = queue.merge;
               if (!merge) return false;
-              const sourceId = ticket.id;
-              const merged = await merge(sourceId, target.id);
+              // the request acts on the ticket shown (merge-resolved); the
+              // parent is told the open id it compares with
+              const merged = await merge(ticket.id, target.id);
               if (!merged) return false;
-              onMerged(sourceId, merged.id);
+              onMerged(ticketId, merged.id);
               return true;
             }}
             onDelete={async () => {
-              const id = ticket.id;
-              const deleted = await queue.remove([id]);
+              const deleted = await queue.remove([ticket.id]);
               if (deleted === null) return false;
-              onGone(id);
+              onGone(ticketId);
               return true;
             }}
             labels={labels}

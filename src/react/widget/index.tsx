@@ -61,7 +61,10 @@ export type SupportWidgetProps = {
    * the launcher) while `ticketId` is set, the panel shows that ticket's
    * thread, so the same link can open it again after the user closed it.
    * A launcher click the app declines (keeping `open` false) doesn't count
-   * as the launcher for the app's own later open.
+   * as the launcher for the app's own later open. Set `open` from
+   * `onOpenChange` in the same event: an `open` that turns true in a later
+   * render (after an await, in a transition, through a router navigation)
+   * counts as the app opening the panel and shows `ticketId`'s thread.
    */
   open?: boolean;
   /**
@@ -195,6 +198,7 @@ export function SupportWidget({
   const go = useCallback((next: View) => {
     if (!mounted.current) return;
     navigated.current = true;
+    viewRef.current = next;
     setView(next);
     const id = next.name === "thread" ? next.ticketId : null;
     if (openIdRef.current === id) return;
@@ -216,13 +220,20 @@ export function SupportWidget({
     const next = ticketId ?? null;
     if (linked.current === next) return;
     linked.current = next;
+    // the refs too: a continuation that lands before the re-render compares
+    // with the view now on screen
     if (!next) {
-      setView((current) =>
-        current.name === "thread" ? { name: "list" } : current,
-      );
+      if (viewRef.current.name !== "thread") return;
+      const list: View = { name: "list" };
+      viewRef.current = list;
+      openIdRef.current = null;
+      setView(list);
       return;
     }
-    setView({ name: "thread", ticketId: next });
+    const thread: View = { name: "thread", ticketId: next };
+    viewRef.current = thread;
+    openIdRef.current = next;
+    setView(thread);
     if (!inline && !openRef.current) setOpen(true);
   }, [ticketId, inline, setOpen]);
 
@@ -240,8 +251,11 @@ export function SupportWidget({
     wasOpen.current = open;
     const fromLauncher = launcherOpened.current;
     launcherOpened.current = false;
-    if (!opened || fromLauncher) return;
-    if (ticketId) setView({ name: "thread", ticketId });
+    if (!opened || fromLauncher || !ticketId) return;
+    const thread: View = { name: "thread", ticketId };
+    viewRef.current = thread;
+    openIdRef.current = ticketId;
+    setView(thread);
   }, [open, ticketId, launcherClicks]);
 
   useEffect(() => {

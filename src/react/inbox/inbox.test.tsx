@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupportFetchClient } from "../hooks";
 import { defaultLabels, type SupportLabels } from "../labels";
@@ -118,6 +118,11 @@ type Options = {
   attachments?: Row[];
   canned?: Row[];
   ticketsFor?: (query: Row | undefined) => Row[];
+  /**
+   * Ids the server answers with another ticket, as it does for a merged
+   * source (`{ t1: "t2" }`: t1 was merged into t2).
+   */
+  resolve?: Record<string, string>;
 };
 
 function makeClient(options: Options = {}) {
@@ -139,7 +144,11 @@ function makeClient(options: Options = {}) {
     ),
     ticket: vi.fn((input: { query: { id: string } }) =>
       ok({
-        ticket: tickets.find((t) => t.id === input.query.id) ?? tickets[0],
+        ticket:
+          tickets.find(
+            (t) =>
+              t.id === (options.resolve?.[input.query.id] ?? input.query.id),
+          ) ?? tickets[0],
         messages,
         attachments: options.attachments ?? [],
       }),
@@ -1562,6 +1571,39 @@ describe("deep links (ticketId, onTicketChange)", () => {
     expect(calls).toEqual(["t2"]);
   });
 
+  it("a move that lands before the re-render after a ticketId change compares with the new ticket", async () => {
+    // React runs a later sibling's effects in the same flush as the inbox's
+    // ticketId effect, before the re-render that effect schedules. A click
+    // there must already see the ticket the prop opened: selecting it again
+    // is no change and reports nothing
+    const onTicketChange = vi.fn();
+    const made = makeClient();
+    function SelectOnChange({ id }: { id: string }) {
+      useEffect(() => {
+        if (id !== "t2") return;
+        screen.getAllByRole("button", { name: /Printer jam/ })[0]?.click();
+      }, [id]);
+      return null;
+    }
+    const ui = (id: string) => (
+      <>
+        <SupportInbox
+          client={made.client}
+          agents={AGENTS}
+          pollInterval={0}
+          ticketId={id}
+          onTicketChange={onTicketChange}
+        />
+        <SelectOnChange id={id} />
+      </>
+    );
+    const { rerender } = render(ui("t1"));
+    await screen.findByRole("region", { name: "Login broken" });
+    rerender(ui("t2"));
+    await screen.findByRole("region", { name: "Printer jam" });
+    expect(onTicketChange).not.toHaveBeenCalled();
+  });
+
   it("reports null when the open ticket is deleted", async () => {
     const onTicketChange = vi.fn();
     const { mocks } = await openTicket({}, { onTicketChange });
@@ -1757,6 +1799,108 @@ describe("async moves report only the user's own selection", () => {
     unmount();
     await settle(pending, { data: { deleted: 1 }, error: null });
     expect(onTicketChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("a merged source open (the server answers with its target)", () => {
+  // t1 was merged into t2: opening t1 shows t2, as deep links and old
+  // notifications to a merged ticket do
+  const merged: Options = {
+    resolve: { t1: "t2" },
+    ticketsFor: (query) =>
+      query?.q === "3" ? [ticket(3)] : [ticket(1), ticket(2), ticket(3)],
+  };
+  const panel = () =>
+    within(screen.getByRole("complementary", { name: "Details" }));
+
+  /** Opens #1 (Login broken), which shows #2 (Printer jam). */
+  async function openSource(props: Partial<SupportInboxProps> = {}) {
+    const rendered = await openTicket(merged, props);
+    await screen.findByRole("region", { name: "Printer jam" });
+    expect(rendered.mocks.ticket).toHaveBeenCalledWith({ query: { id: "t1" } });
+    return rendered;
+  }
+
+  it("deleting from the pane deletes the shown ticket and closes the thread", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openSource({ onTicketChange });
+    fireEvent.click(panel().getByRole("button", { name: "Delete ticket" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t2"] }),
+    );
+    await waitFor(() => expect(screen.queryByRole("log")).toBeNull());
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("merging the shown ticket follows to the target and reports it", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openSource({ onTicketChange });
+    mocks.merge.mockImplementationOnce(() => ok({ ticket: ticket(3) }));
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    const dialog = await screen.findByRole("dialog", { name: "Merge" });
+    fireEvent.change(
+      within(dialog).getByLabelText("Search by number or subject"),
+      { target: { value: "3" } },
+    );
+    fireEvent.click(
+      await within(dialog).findByRole("button", {
+        name: "Merge into #3: Refund needed",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes, merge" }));
+    await waitFor(() =>
+      expect(mocks.merge).toHaveBeenCalledWith({
+        sourceId: "t2",
+        targetId: "t3",
+      }),
+    );
+    await screen.findByRole("region", { name: "Refund needed" });
+    expect(onTicketChange).toHaveBeenLastCalledWith("t3");
+  });
+
+  it("a bulk delete of the shown ticket closes the thread", async () => {
+    const onTicketChange = vi.fn();
+    const { mocks } = await openSource({ onTicketChange });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select ticket #2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t2"] }),
+    );
+    await waitFor(() => expect(screen.queryByRole("log")).toBeNull());
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("a bulk delete of the previous pane's shown ticket keeps a newly opened one", async () => {
+    const { mocks } = await openSource();
+    // #3 opens; its answer is held, so the pane has not reported its own yet
+    let answer: () => void = () => {};
+    mocks.ticket.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = () =>
+            resolve({
+              data: { ticket: ticket(3), messages: [], attachments: [] },
+              error: null,
+            });
+        }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Refund needed/ }));
+    await waitFor(() =>
+      expect(mocks.ticket).toHaveBeenLastCalledWith({ query: { id: "t3" } }),
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select ticket #2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+    await waitFor(() =>
+      expect(mocks.delete).toHaveBeenCalledWith({ ids: ["t2"] }),
+    );
+    await waitFor(() => expect(screen.queryByText("1 selected")).toBeNull());
+    await act(async () => answer());
+    expect(
+      await screen.findByRole("region", { name: "Refund needed" }),
+    ).toBeTruthy();
   });
 });
 

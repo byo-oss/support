@@ -47,7 +47,7 @@ await auth.api.processSupportDeliveries({});   // server-only → { sent, skippe
 
 ## Options (support(options), all optional)
 
-staffOrganizationId: string | null | (() => string | null | undefined)  // the vendor's staff org; agents are its members whose role has support actions. Function: resolved per request, synchronous, must not throw (throw or non-string, e.g. an async fn's Promise = no staff org, logged once). null: no agents, no boot warning
+staffOrganizationId: string | null | (() => string | null | undefined)  // the vendor's staff org; agents are its members whose role has support actions. Function: resolved per request, synchronous, must not throw (an async fn is refused at boot; a function that throws or returns anything but a string, null or undefined, e.g. a Promise = no staff org, logged once). null: no agents, no boot warning
 authorize({ session, headers, organizationId, permissions }) => boolean  // default: staff-org member + organization plugin hasPermission; organizationId is always staffOrganizationId (resolved per request). With staffOrganizationId null (no staff org) + custom authorize: ALSO pass isAgent, or assignment and mentions fail NOT_AN_AGENT
 acceptSession({ session, headers, kind: "customer"|"agent" }) => boolean // default: refuse impersonated sessions; false → 403 SESSION_NOT_ACCEPTED. Runs only once a session exists: an API key/bearer alone, with no plugin turning it into a session, is 401 before it. App guards that run before better-auth answer first: classify support's GET paths (my-tickets, ticket, attachment, agent/tickets, agent/ticket, agent/tags, agent/canned, agent/attachment; all else POST; map: supportPathMethods from /client)
 isAgent(userId) => boolean                      // who may be assigned or @mentioned; default: staff member with support:read; else NOT_AN_AGENT
@@ -60,7 +60,7 @@ organizationCleanup: true                       // clean up after /organization/
 autoCloseAfter: 604800000                       // ms; sweep closes solved tickets
 maxAttempts: 5, batchSize: 100, leaseMs: 300000, pageSize: 25 (1-50)
 schema                                          // rename tables and fields
-// boot errors ([@byo-oss/support] …): mailer without email or the reverse; inbound without email or source; attachments without storage; replyDelay < 0; replyDomain containing @; pageSize > 50; forbidden allowedTypes
+// boot errors ([@byo-oss/support] …): staffOrganizationId not a string, null or function, or an async function; mailer without email or the reverse; inbound without email or source; attachments without storage; replyDelay < 0; replyDomain containing @; pageSize > 50; forbidden allowedTypes
 
 ## Endpoints (auth.api key, method path, kind, input → returns). Server: auth.api.X({ headers, body | query }). Client: authClient.support.createTicket / myTickets / ticket / reply / updateMine / markSeen / agent.tickets / agent.ticket / agent.reply / agent.update / agent.merge / agent.delete / agent.markSeen / agent.tags / agent.canned (.save, .delete)
 

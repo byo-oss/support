@@ -122,6 +122,12 @@ export function SupportInbox({
       mounted.current = false;
     };
   }, []);
+  // the ticket the open pane shows, for the open id it was answered for: a
+  // merged source shows its target, and deleting that target closes it
+  const resolvedRef = useRef<{ openId: string; id: string } | null>(null);
+  const onResolved = useCallback((openId: string, id: string) => {
+    resolvedRef.current = { openId, id };
+  }, []);
   /** A selection the user made: tell the app, so it can sync its URL. */
   const select = useCallback((id: string | null) => {
     if (!mounted.current || openIdRef.current === id) return;
@@ -138,6 +144,9 @@ export function SupportInbox({
     const next = ticketId ?? null;
     if (linked.current === next) return;
     linked.current = next;
+    // the ref too: a continuation that lands before the re-render compares
+    // with the ticket now open
+    openIdRef.current = next;
     setOpenId(next);
   }, [ticketId]);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
@@ -178,7 +187,14 @@ export function SupportInbox({
           // a deleted ticket must not stay on screen with a live composer;
           // read at resolve time: the agent may have opened another meanwhile
           const open = openIdRef.current;
-          if (open !== null && ids.includes(open)) select(null);
+          if (open === null) return;
+          const shown = resolvedRef.current;
+          if (
+            ids.includes(open) ||
+            (shown?.openId === open && ids.includes(shown.id))
+          ) {
+            select(null);
+          }
         }}
         buttonClassName={buttonClassName}
         className={cx(
@@ -200,14 +216,16 @@ export function SupportInbox({
           renderMessage={renderMessage}
           onBack={() => select(null)}
           onGone={(id) => {
-            // only if the agent is still on it: they may have opened another
-            // ticket while the delete was in flight
+            // `id` is the open id the pane was mounted for, even when it
+            // shows a merge target; act only if the agent is still on it:
+            // they may have opened another ticket while the delete was in flight
             if (openIdRef.current === id) select(null);
           }}
           onMerged={(sourceId, targetId) => {
             // follow to the target only from the ticket that was merged
             if (openIdRef.current === sourceId) select(targetId);
           }}
+          onResolved={onResolved}
           className={cx("flex-1", threadClassName)}
           messageClassName={messageClassName}
           composerClassName={composerClassName}
