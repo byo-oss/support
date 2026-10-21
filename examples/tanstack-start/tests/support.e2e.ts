@@ -24,8 +24,9 @@ test(
     await screen.getByLabel("Subject").fill(subject);
     await screen.getByLabel("Message").fill(question);
     await screen.getByRole("button", "Submit ticket").tap();
-    // the thread opens with the first message
-    await expect(screen.getByText(question)).toBeVisible();
+    // the thread opens with the first message, and `onTicketChange` puts its id in the URL
+    await expect(browser).toHaveURL(/\/help\?ticket=[^&#]+$/);
+    await expect(screen.getByRole("button", "Mark solved")).toBeVisible();
 
     // agent: sign in, find the ticket in the inbox, reply
     await screen.getByRole("button", "Sign out").tap();

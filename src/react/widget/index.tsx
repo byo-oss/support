@@ -175,8 +175,18 @@ export function SupportWidget({
   // an inline widget's first view leaves focus where the page put it; a
   // view the user moves to takes focus
   const navigated = useRef(false);
+  // a request that settles after unmount (a slow create, then the user
+  // navigates away) must not move the app's URL back to the ticket
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   /** A view the user moved to: tell the app when the open ticket changed, so it can sync its URL. */
   const go = useCallback((next: View) => {
+    if (!mounted.current) return;
     navigated.current = true;
     setView(next);
     const id = next.name === "thread" ? next.ticketId : null;

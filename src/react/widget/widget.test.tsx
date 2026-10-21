@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -1313,6 +1314,31 @@ describe("SupportWidget onTicketChange", () => {
     await createFromForm();
     await waitFor(() => expect(onTicketChange).toHaveBeenLastCalledWith("new"));
     expect(onTicketChange).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not report a ticket created after the widget unmounted", async () => {
+    const onTicketChange = vi.fn();
+    type Created = Awaited<
+      ReturnType<typeof ok<{ ticket: ReturnType<typeof ticket> }>>
+    >;
+    let settle: (value: Created) => void = () => {};
+    const { mocks, unmount } = renderWidget(
+      {},
+      { variant: "inline", onTicketChange },
+    );
+    mocks.createTicket.mockImplementation(
+      () =>
+        new Promise<Created>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    await createFromForm();
+    await waitFor(() => expect(mocks.createTicket).toHaveBeenCalled());
+    unmount();
+    await act(async () => {
+      settle({ data: { ticket: ticket("late") }, error: null });
+    });
+    expect(onTicketChange).not.toHaveBeenCalled();
   });
 
   it("inline: never reports changes from the ticketId prop, and null goes back to the list", async () => {
