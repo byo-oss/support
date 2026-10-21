@@ -316,6 +316,23 @@ describe("listSupportTickets (J6)", () => {
     ).toEqual([t.a.id]);
   });
 
+  it("filters by requester: a user id, or an account-less sender's email in any case", async () => {
+    expect(ids(await list({ requesterId: s.world.customer.user.id }))).toEqual([
+      t.a.id,
+    ]);
+    expect(ids(await list({ requesterEmail: "SomeOne@Mail.test" }))).toEqual([
+      t.c.id,
+    ]);
+    expect(
+      ids(
+        await list({
+          requesterId: s.world.customer.user.id,
+          status: "pending",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("returns queue-wide counts, whatever the filters", async () => {
     const expected = { open: 2, pending: 1, unassigned: 2, mine: 1 };
     expect((await list()).counts).toEqual(expected);

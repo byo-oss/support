@@ -344,6 +344,8 @@ export const SUPPORT_LIMITS = {
   attachmentIds: 10,
   mentions: 20,
   q: 200,
+  /** `requesterEmail` on the queue: the longest an address can be. */
+  email: 320,
   cursor: 10_000,
   /** Ids carried in a list cursor. */
   cursorIds: 200,

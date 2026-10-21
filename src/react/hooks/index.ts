@@ -386,6 +386,9 @@ export type UseSupportQueueOptions = Polling & {
   assignee?: string;
   tag?: string;
   organizationId?: string;
+  /** One requester's tickets: their user id, or an account-less requester's email. */
+  requesterId?: string;
+  requesterEmail?: string;
   q?: string;
 };
 
@@ -418,13 +421,23 @@ export function useSupportQueue(
     assignee,
     tag,
     organizationId,
+    requesterId,
+    requesterEmail,
     q,
     pollInterval = DEFAULT_POLL_INTERVAL,
   } = options;
   const clientRef = useRef(client);
   clientRef.current = client;
 
-  const query = { status, assignee, tag, organizationId, q };
+  const query = {
+    status,
+    assignee,
+    tag,
+    organizationId,
+    requesterId,
+    requesterEmail,
+    q,
+  };
   const list = useSupportPagedResource<
     WireAgentTicket,
     {
@@ -433,7 +446,15 @@ export function useSupportQueue(
       tags: string[];
     }
   >({
-    scope: [status, assignee, tag, organizationId, q]
+    scope: [
+      status,
+      assignee,
+      tag,
+      organizationId,
+      requesterId,
+      requesterEmail,
+      q,
+    ]
       .map((part) => part ?? "")
       .join("|"),
     pollInterval,
