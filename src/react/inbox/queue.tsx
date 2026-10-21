@@ -1,9 +1,17 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
-import { TOUCH_TARGET } from "../classes";
+import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
 import type { UseSupportQueueResult, WireAgentTicket } from "../hooks";
-import { Avatar, Icon, PriorityBadge, StatusBadge, TagPill, Time } from "../ui";
+import {
+  Avatar,
+  asDate,
+  Icon,
+  PriorityBadge,
+  StatusBadge,
+  TagPill,
+  Time,
+} from "../ui";
 import { Button, buttonClass, Confirm, cx, fieldClass } from "./primitives";
 import type { InboxLabels, SupportAgent } from "./types";
 
@@ -32,6 +40,8 @@ type QueuePaneProps = {
   onCheckedChange: (checked: Set<string>) => void;
   /** Called with the ids once a bulk delete went through. */
   onDeleted: (ids: string[]) => void;
+  /** Opens the keyboard shortcuts sheet. */
+  onShortcuts: () => void;
   className?: string | undefined;
   buttonClassName?: string | undefined;
   fieldClassName?: string | undefined;
@@ -54,6 +64,7 @@ export function QueuePane({
   checked,
   onCheckedChange,
   onDeleted,
+  onShortcuts,
   className,
   buttonClassName,
   fieldClassName,
@@ -138,13 +149,28 @@ export function QueuePane({
       )}
     >
       <div className="flex flex-col gap-2 border-b border-border p-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Icon
-            name="inbox"
-            className="size-4 shrink-0 text-muted-foreground"
-          />
-          {labels.queue}
-        </h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Icon
+              name="inbox"
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+            {labels.queue}
+          </h2>
+          <button
+            type="button"
+            onClick={onShortcuts}
+            title={labels.shortcuts}
+            aria-keyshortcuts="?"
+            className={cx(
+              "inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              TOUCH_ICON,
+            )}
+          >
+            <Icon name="keyboard" />
+            <span className="sr-only">{labels.shortcuts}</span>
+          </button>
+        </div>
         <div className="flex flex-wrap gap-1.5">
           {chip(labels.countOpen(counts.open), filters.status === "open", () =>
             onFiltersChange({
@@ -589,6 +615,12 @@ function QueueRow({
               status={ticket.status}
               label={labels.status[ticket.status]}
             />
+            {ticket.status === "open" ? (
+              <WaitingPill
+                since={asDate(ticket.lastMessageAt)}
+                labels={labels}
+              />
+            ) : null}
             {ticket.priority && loud ? (
               <PriorityBadge
                 priority={ticket.priority}
@@ -617,5 +649,33 @@ function QueueRow({
         </span>
       </button>
     </li>
+  );
+}
+
+const HOUR = 60 * 60 * 1000;
+/** Amber from 6 hours, red from a day: better-helpdesk's thresholds. */
+const WAIT_WARN_MS = 6 * HOUR;
+const WAIT_LATE_MS = 24 * HOUR;
+
+/**
+ * How long an open ticket has waited for the team. Only replies move
+ * `lastMessageAt`, and a customer reply sets the status to open, so on an
+ * open ticket it is when the customer last wrote.
+ */
+function WaitingPill({ since, labels }: { since: Date; labels: InboxLabels }) {
+  const waited = Date.now() - since.getTime();
+  if (Number.isNaN(waited)) return null;
+  const tone =
+    waited >= WAIT_LATE_MS
+      ? "border-destructive/40 bg-destructive/10 text-destructive"
+      : waited >= WAIT_WARN_MS
+        ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+        : "border-border text-muted-foreground";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 tabular-nums ${tone}`}
+    >
+      {labels.waitingFor(since)}
+    </span>
   );
 }

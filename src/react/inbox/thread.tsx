@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import type { MouseEvent, MutableRefObject, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TicketPriority, TicketStatus } from "../../schema";
 import { TOUCH_TARGET } from "../classes";
@@ -19,10 +19,20 @@ import {
   StatusBadge,
   Time,
 } from "../ui";
-import { Composer, type ComposerDrafts } from "./composer";
+import {
+  Composer,
+  type ComposerCommands,
+  type ComposerDrafts,
+} from "./composer";
 import { DetailsPanel } from "./details";
 import { Button, cx } from "./primitives";
 import type { InboxLabels, SupportAgent } from "./types";
+
+/** What the inbox's shortcuts ask of the open thread. */
+export type ThreadActions = {
+  /** Mark the ticket solved (the `e` shortcut). */
+  solve: () => void;
+};
 
 type ThreadPaneProps = {
   client: SupportFetchClient;
@@ -58,6 +68,10 @@ type ThreadPaneProps = {
   onResolved: (openId: string, id: string) => void;
   /** Unsent text by ticket, kept by the inbox across thread panes. */
   drafts?: ComposerDrafts | undefined;
+  /** Filled with the composer's commands, for the inbox's shortcuts. */
+  commandsRef?: MutableRefObject<ComposerCommands | null> | undefined;
+  /** Filled with this pane's actions, for the inbox's shortcuts. */
+  actionsRef?: MutableRefObject<ThreadActions | null> | undefined;
   className?: string | undefined;
   messageClassName?: string | undefined;
   composerClassName?: string | undefined;
@@ -80,6 +94,8 @@ export function ThreadPane({
   onMerged,
   onResolved,
   drafts,
+  commandsRef,
+  actionsRef,
   className,
   messageClassName,
   composerClassName,
@@ -108,6 +124,19 @@ export function ThreadPane({
     if (ok) void refreshQueue();
     return ok;
   };
+  const solveRef = useRef<() => void>(() => {});
+  solveRef.current = () => {
+    if (ticket && ticket.status !== "solved" && ticket.status !== "closed")
+      void update({ status: "solved" });
+  };
+  useEffect(() => {
+    if (!actionsRef) return;
+    actionsRef.current = { solve: () => solveRef.current() };
+    return () => {
+      actionsRef.current = null;
+    };
+  }, [actionsRef]);
+
   const [detailsOpen, setDetailsOpen] = useState(false);
   const attachmentsOn = queue.features.attachments;
 
@@ -469,6 +498,7 @@ export function ThreadPane({
               attachments={attachmentsOn}
               status={ticket.status}
               drafts={drafts}
+              commandsRef={commandsRef}
               labels={labels}
               className={composerClassName}
               buttonClassName={buttonClassName}

@@ -138,6 +138,33 @@ export type SupportInboxLabels = {
   properties: string;
   /** Alt text of an image attachment preview. */
   imagePreview: (filename: string) => string;
+  /** On an open ticket's row: how long the customer has waited since their last reply ("Waiting 3h"). */
+  waitingFor: (since: Date) => string;
+  /** The menu next to Send, and its choices. */
+  sendOptions: string;
+  sendKeepOpen: string;
+  sendAndClose: string;
+  /** Composer placeholders: `/` and `@` open suggestions. */
+  replyPlaceholder: string;
+  notePlaceholder: string;
+  /** Names of the suggestion lists under the composer. */
+  cannedSuggestions: string;
+  mentionSuggestions: string;
+  /** The keyboard shortcuts sheet (`?`). */
+  shortcuts: string;
+  shortcutsToggle: string;
+  shortcutsToggleHint: string;
+  shortcutNext: string;
+  shortcutPrevious: string;
+  shortcutOpen: string;
+  shortcutSearch: string;
+  shortcutReply: string;
+  shortcutNote: string;
+  shortcutSolve: string;
+  shortcutSend: string;
+  shortcutHelp: string;
+  /** The send keys as the shortcuts sheet writes them. */
+  sendKeys: string;
 };
 
 export const defaultInboxLabels: SupportInboxLabels = {
@@ -255,4 +282,36 @@ export const defaultInboxLabels: SupportInboxLabels = {
   requesterNotSeen: "Hasn't opened the ticket yet",
   properties: "Properties",
   imagePreview: (filename) => `Preview of ${filename}`,
+  waitingFor: (since) =>
+    `Waiting ${formatDuration(Date.now() - since.getTime())}`,
+  sendOptions: "More ways to send",
+  sendKeepOpen: "Send and keep open",
+  sendAndClose: "Send and close",
+  replyPlaceholder: "Reply to the customer. Type / for canned replies",
+  notePlaceholder: "Only your team sees notes. Type @ to mention someone",
+  cannedSuggestions: "Canned replies",
+  mentionSuggestions: "Team members",
+  shortcuts: "Keyboard shortcuts",
+  shortcutsToggle: "Single-key shortcuts",
+  shortcutsToggleHint:
+    "Turn these off if they get in the way of a screen reader or voice control. Ctrl+Enter keeps working.",
+  shortcutNext: "Next ticket",
+  shortcutPrevious: "Previous ticket",
+  shortcutOpen: "Open the ticket",
+  shortcutSearch: "Search the queue",
+  shortcutReply: "Write a reply",
+  shortcutNote: "Write an internal note",
+  shortcutSolve: "Mark the open ticket solved",
+  shortcutSend: "Send",
+  shortcutHelp: "Show these shortcuts",
+  sendKeys: "Ctrl+Enter",
 };
+
+/** `45m`, `3h`, `2d`: a short duration. */
+function formatDuration(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}

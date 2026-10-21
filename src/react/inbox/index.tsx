@@ -4,11 +4,16 @@ import type { SupportFetchClient, WireAgentMessage } from "../hooks";
 import { useSupportQueue } from "../hooks";
 import { defaultLabels, type SupportLabels } from "../labels";
 import { Icon } from "../ui";
-import type { ComposerDrafts } from "./composer";
+import type { ComposerCommands, ComposerDrafts } from "./composer";
 import { defaultInboxLabels, type SupportInboxLabels } from "./labels";
 import { cx } from "./primitives";
 import { type QueueFilters, QueuePane } from "./queue";
-import { ThreadPane } from "./thread";
+import {
+  ShortcutsDialog,
+  useInboxShortcuts,
+  useShortcutsSetting,
+} from "./shortcuts";
+import { type ThreadActions, ThreadPane } from "./thread";
 import type { InboxLabels, SupportAgent } from "./types";
 
 export type { SupportAgent } from "./types";
@@ -161,6 +166,19 @@ export function SupportInbox({
   // unsent text by ticket: opening another ticket and coming back keeps it
   const drafts = useRef<ComposerDrafts>(new Map()).current;
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const commandsRef = useRef<ComposerCommands | null>(null);
+  const actionsRef = useRef<ThreadActions | null>(null);
+  const [keysOn, setKeysOn] = useShortcutsSetting();
+  const [helpOpen, setHelpOpen] = useState(false);
+  useInboxShortcuts({
+    rootRef,
+    enabled: keysOn,
+    onHelp: () => setHelpOpen(true),
+    commandsRef,
+    actionsRef,
+  });
+
   // the live region sits at the root: on narrow screens the queue is hidden
   // while a thread is open, and a hidden region is never announced
   const unread = queue.tickets.filter((ticket) => ticket.unread).length;
@@ -173,6 +191,7 @@ export function SupportInbox({
 
   return (
     <div
+      ref={rootRef}
       className={cx(
         "flex h-full min-h-[28rem] w-full min-w-0 flex-col rounded-lg border border-border bg-background text-foreground md:flex-row",
         className,
@@ -181,6 +200,15 @@ export function SupportInbox({
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
+      {helpOpen ? (
+        <ShortcutsDialog
+          labels={labels}
+          enabled={keysOn}
+          onEnabledChange={setKeysOn}
+          onClose={() => setHelpOpen(false)}
+          buttonClassName={buttonClassName}
+        />
+      ) : null}
       <QueuePane
         queue={queue}
         labels={labels}
@@ -193,6 +221,7 @@ export function SupportInbox({
         onOpenTicket={select}
         checked={checked}
         onCheckedChange={setChecked}
+        onShortcuts={() => setHelpOpen(true)}
         onDeleted={(ids) => {
           // a deleted ticket must not stay on screen with a live composer;
           // read at resolve time: the agent may have opened another meanwhile
@@ -238,6 +267,8 @@ export function SupportInbox({
           }}
           onResolved={onResolved}
           drafts={drafts}
+          commandsRef={commandsRef}
+          actionsRef={actionsRef}
           className={cx("flex-1", threadClassName)}
           messageClassName={messageClassName}
           composerClassName={composerClassName}
