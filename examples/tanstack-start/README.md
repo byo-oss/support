@@ -1,8 +1,9 @@
 # @byo-oss/support × TanStack Start
 
 TanStack Start + better-auth (SQLite via `node:sqlite`) + `@byo-oss/support`, with an
-end-to-end suite that proves the wiring: a customer opens a ticket from the widget, an
-agent answers it in the inbox, the customer solves it.
+end-to-end suite that proves the wiring: a customer opens a ticket from the inline widget on the
+help page, an agent answers it in the inbox, the customer solves it. Both pages deep-link:
+`/help?ticket=<id>` and `/inbox/<id>` open that ticket.
 
 Needs Node 22.13+ (for `node:sqlite` and running `.ts` scripts; 22.18+ strips types by default).
 
@@ -13,8 +14,8 @@ pnpm seed        # staff organization, an agent and a customer
 pnpm dev         # http://localhost:3000
 ```
 
-Sign in as the customer (`customer@example.dev` / `customer-password-123`), open **Help**,
-press **Support** and create a ticket. Sign out, sign in as the agent
+Sign in as the customer (`customer@example.dev` / `customer-password-123`), open **Help**
+(the widget is inline on the page, so there is no launcher) and press **New ticket**. Sign out, sign in as the agent
 (`agent@example.dev` / `agent-password-123`), open **Inbox** and reply.
 
 ## Where the pieces are
@@ -24,10 +25,14 @@ press **Support** and create a ticket. Sign out, sign in as the agent
   Shared with `scripts/migrate.ts` and `scripts/seed.ts`, which run under plain Node.
 - `src/lib/auth.ts`: adds `tanstackStartCookies()` last, for server functions.
 - `src/lib/auth-client.ts`: `supportClient()`.
-- `src/routes/help.tsx`: `<SupportWidget client={authClient} ticketId={ticket} />` for signed-in customers.
+- `src/routes/help.tsx`: `<SupportWidget client={authClient} variant="inline" ticketId={ticket} />` for
+  signed-in customers: the panel is rendered in the page, not as a popover.
   `?ticket=<id>` opens that ticket's thread, which is where reply emails link (`ticketPath` in `auth-options.ts`).
-- `src/routes/inbox.tsx`: `<SupportInbox client={authClient} agents={agents} />`. `agents` are the
-  staff organization's members, loaded by the server function in `src/lib/agents.ts`.
+- `src/routes/inbox.tsx`: `<SupportInbox client={authClient} agents={agents} ticketId={id} onTicketChange={...} />`.
+  `agents` are the staff organization's members, loaded by the server function in `src/lib/agents.ts`.
+  It is the layout for `/inbox` and `/inbox/$id`: `src/routes/inbox.$id.tsx` only declares the `id` param,
+  which the layout passes as `ticketId`. Selecting a ticket (or Back) navigates between the two URLs through
+  `onTicketChange`, and opening `/inbox/<id>` directly opens the ticket, so notification links can point at it.
 - `src/routes/api/cron/support.ts`: the sweep (`sweepAll` from `@byo-oss/core`). Delayed replies are
   only mailed when something calls it; point a scheduler at it every minute.
 - `scripts/seed.ts`: creates the staff organization with the fixed id `staff-org`, which the plugin
@@ -57,6 +62,7 @@ pnpm test:e2e
 
 The runner starts the app on a free port against a fresh `e2e.db` (migrated and seeded by
 `e2e:serve`). It checks the whole loop: customer signs in and opens a ticket, agent signs in, sees it
-and replies, the sweep mails the reply, the customer sees it and marks the ticket solved.
+and replies, the agent reloads on `/inbox/<id>` and still sees the thread, the sweep mails the reply,
+the customer sees it, opens `/help?ticket=<id>` and marks the ticket solved from the inline thread.
 
 e2e needs Node 22.22.3+ or 24.8+.

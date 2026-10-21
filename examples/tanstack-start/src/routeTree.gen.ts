@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as HelpRouteImport } from './routes/help'
 import { Route as InboxRouteImport } from './routes/inbox'
+import { Route as InboxIdRouteImport } from './routes/inbox.$id'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiCronSupportRouteImport } from './routes/api/cron/support'
 
@@ -30,6 +31,11 @@ const InboxRoute = InboxRouteImport.update({
   path: '/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InboxIdRoute = InboxIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => InboxRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -44,14 +50,16 @@ const ApiCronSupportRoute = ApiCronSupportRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/help': typeof HelpRoute
-  '/inbox': typeof InboxRoute
+  '/inbox': typeof InboxRouteWithChildren
+  '/inbox/$id': typeof InboxIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/support': typeof ApiCronSupportRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/help': typeof HelpRoute
-  '/inbox': typeof InboxRoute
+  '/inbox': typeof InboxRouteWithChildren
+  '/inbox/$id': typeof InboxIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/support': typeof ApiCronSupportRoute
 }
@@ -59,23 +67,42 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/help': typeof HelpRoute
-  '/inbox': typeof InboxRoute
+  '/inbox': typeof InboxRouteWithChildren
+  '/inbox/$id': typeof InboxIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/cron/support': typeof ApiCronSupportRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/help' | '/inbox' | '/api/auth/$' | '/api/cron/support'
+  fullPaths:
+    | '/'
+    | '/help'
+    | '/inbox'
+    | '/inbox/$id'
+    | '/api/auth/$'
+    | '/api/cron/support'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/help' | '/inbox' | '/api/auth/$' | '/api/cron/support'
+  to:
+    | '/'
+    | '/help'
+    | '/inbox'
+    | '/inbox/$id'
+    | '/api/auth/$'
+    | '/api/cron/support'
   id:
-    '__root__' | '/' | '/help' | '/inbox' | '/api/auth/$' | '/api/cron/support'
+    | '__root__'
+    | '/'
+    | '/help'
+    | '/inbox'
+    | '/inbox/$id'
+    | '/api/auth/$'
+    | '/api/cron/support'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HelpRoute: typeof HelpRoute
-  InboxRoute: typeof InboxRoute
+  InboxRoute: typeof InboxRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiCronSupportRoute: typeof ApiCronSupportRoute
 }
@@ -103,6 +130,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InboxRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/inbox/$id': {
+      id: '/inbox/$id'
+      path: '/$id'
+      fullPath: '/inbox/$id'
+      preLoaderRoute: typeof InboxIdRouteImport
+      parentRoute: typeof InboxRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -120,10 +154,20 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface InboxRouteChildren {
+  InboxIdRoute: typeof InboxIdRoute
+}
+
+const InboxRouteChildren: InboxRouteChildren = {
+  InboxIdRoute: InboxIdRoute,
+}
+
+const InboxRouteWithChildren = InboxRoute._addFileChildren(InboxRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HelpRoute: HelpRoute,
-  InboxRoute: InboxRoute,
+  InboxRoute: InboxRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiCronSupportRoute: ApiCronSupportRoute,
 }

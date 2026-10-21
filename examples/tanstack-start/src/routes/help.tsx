@@ -27,9 +27,11 @@ function Help() {
   return (
     <div style={{ display: "grid", gap: 12 }}>
       <h1>Help</h1>
-      {/* `onNavigate` receives in-app links; `ticketId` opens a linked ticket */}
+      {/* inline: the panel fills the page, with no launcher. `ticketId` opens a linked
+          ticket; `onNavigate` receives in-app links */}
       <SupportWidget
         client={authClient}
+        variant="inline"
         ticketId={ticket}
         onNavigate={(href) => navigate({ href })}
       />

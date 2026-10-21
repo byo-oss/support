@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { SupportInbox } from "@byo-oss/support/react";
 import { listAgents } from "../lib/agents";
 import { authClient } from "../lib/auth-client";
@@ -17,8 +17,13 @@ export const Route = createFileRoute("/inbox")({
 
 // The agent page: the endpoints behind SupportInbox check `support` actions
 // in the staff organization, so a customer who finds this URL gets 403s.
+//
+// This layout renders the inbox for both `/inbox` and `/inbox/$id` (the child route in
+// `inbox.$id.tsx` only declares the param), so the inbox stays mounted as the URL changes.
 function Inbox() {
   const navigate = useNavigate();
+  // `/inbox/<id>` opens that ticket, which is where notification links point
+  const { id } = useParams({ strict: false });
   const { agents } = Route.useLoaderData();
   const { data: session, isPending } = authClient.useSession();
   if (isPending) return null;
@@ -31,6 +36,10 @@ function Inbox() {
       <SupportInbox
         client={authClient}
         agents={agents}
+        ticketId={id ?? null}
+        onTicketChange={(next) =>
+          navigate(next ? { to: "/inbox/$id", params: { id: next } } : { to: "/inbox" })
+        }
         onNavigate={(href) => navigate({ href })}
       />
     </div>
