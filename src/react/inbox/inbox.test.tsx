@@ -2027,16 +2027,27 @@ describe("class props", () => {
     );
     const missing = new Set<string>();
     const stray = new Set<string>();
+    // 16px text below md, so iOS doesn't zoom into a focused field
+    const zooms = new Set<string>();
     const scan = () => {
       for (const el of container.querySelectorAll<HTMLElement>("*")) {
         const has = el.classList.contains("field-x");
         if (isField(el) && !has) missing.add(describeControl(el));
         if (!isField(el) && has) stray.add(describeControl(el));
+        if (
+          isField(el) &&
+          !(
+            el.classList.contains("text-base") &&
+            el.classList.contains("md:text-sm")
+          )
+        )
+          zooms.add(describeControl(el));
       }
     };
     await openEveryInboxPart(container, scan);
     expect([...missing]).toEqual([]);
     expect([...stray]).toEqual([]);
+    expect([...zooms]).toEqual([]);
   });
 
   it("gives every control a 44px target on a coarse pointer", async () => {

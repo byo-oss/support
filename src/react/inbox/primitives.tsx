@@ -60,7 +60,7 @@ export function Button({
 }
 
 /** Class string of the native selects, inputs and textareas (before the app's `fieldClassName`). */
-export const FIELD_CLASS = `min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${TOUCH_TARGET}`;
+export const FIELD_CLASS = `min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-base text-foreground md:text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${TOUCH_TARGET}`;
 
 /** The class string of a field: defaults, the part's own layout classes, then the app's `fieldClassName`. */
 export function fieldClass(

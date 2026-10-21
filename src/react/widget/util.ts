@@ -52,4 +52,4 @@ export const focusRing =
 export const buttonBase = `inline-flex items-center justify-center rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 ${focusRing} ${TOUCH_TARGET}`;
 export const primaryButton = `inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing} ${TOUCH_TARGET}`;
 /** Text inputs and textareas; the app's `fieldClassName` goes after it. */
-export const fieldBase = `w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground ${focusRing} ${TOUCH_TARGET}`;
+export const fieldBase = `w-full rounded-md border border-border bg-background px-2 py-1.5 text-base text-foreground md:text-sm placeholder:text-muted-foreground ${focusRing} ${TOUCH_TARGET}`;
