@@ -309,11 +309,52 @@ describe("createSupportTicket (J1)", () => {
     await expect(
       create(w.customer, { organizationId: "org_missing" }),
     ).rejects.toEqual(notAMember);
+    // one exact member lookup per check, not a capped list of memberships
     const memberReads = calls.filter(
-      (c) => c.model === "member" && c.method === "findMany",
+      (c) => c.model === "member" && c.method === "findOne",
     );
     expect(memberReads.length).toBeGreaterThan(0);
+    expect(memberReads.at(-1)?.args.where).toEqual([
+      expect.objectContaining({ field: "userId", value: w.customer.user.id }),
+      expect.objectContaining({
+        field: "organizationId",
+        value: "org_missing",
+      }),
+    ]);
     expect(await list(w.outsider)).toMatchObject({ tickets: [] });
+  });
+
+  it("accepts an organization past the caller's first 1000 memberships", async () => {
+    const { adapter } = await getContext(auth);
+    const now = new Date();
+    for (let i = 0; i < 1001; i++) {
+      await adapter.create({
+        model: "member",
+        data: {
+          userId: w.customer.user.id,
+          organizationId: `org_bulk_${i}`,
+          role: "member",
+          createdAt: now,
+        },
+      });
+    }
+    // the membership that sorts last by id: outside any 1000-row page
+    const members = await adapter.findMany<{
+      id: string;
+      organizationId: string;
+    }>({
+      model: "member",
+      where: [{ field: "userId", value: w.customer.user.id }],
+      limit: 2000,
+      sortBy: { field: "id", direction: "desc" },
+    });
+    expect(members.length).toBeGreaterThan(1001);
+    const last = members.find((m) => m.organizationId.startsWith("org_bulk_"));
+    if (!last) throw new Error("no bulk membership");
+    const { ticket } = await create(w.customer, {
+      organizationId: last.organizationId,
+    });
+    expect(ticket.organizationId).toBe(last.organizationId);
   });
 
   it("refuses visibility organization without an organizationId (NOT_ALLOWED)", async () => {

@@ -337,8 +337,11 @@ export async function listTicketAttachments(
 /**
  * Deletes uploads still unattached `opts.uploadTtlMs` (24 h) after
  * `createdAt`: blob first, then row. Returns how many. Without `attachments`: 0.
- * A blob that can't be deleted is logged and its row kept, so the next sweep
- * tries again and one bad blob never fails the sweep.
+ * Each row is read again as `{ id, messageId: null }` just before its blob is
+ * deleted, and the row is deleted under the same guard, so an upload a reply
+ * bound since the sweep listed it is kept with its blob. A blob that can't be
+ * deleted is logged and its row kept, so the next sweep tries again and one
+ * bad blob never fails the sweep.
  */
 export async function pruneUploads(
   rt: SupportRuntime,
@@ -357,7 +360,18 @@ export async function pruneUploads(
     max: Number.MAX_SAFE_INTEGER,
   });
   let pruned = 0;
-  for (const row of stale) {
+  for (const listed of stale) {
+    // a reply may have bound it since the list was read: look again, and keep
+    // it (with its blob) when it's attached now
+    const unattached = [
+      { field: "id", value: listed.id },
+      { field: "messageId", value: null },
+    ];
+    const row = await rt.adapter.findOne<SupportAttachmentRow>({
+      model: "supportAttachment",
+      where: unattached,
+    });
+    if (!row) continue;
     if (row.storageKey) {
       try {
         await attachments.storage.delete(row.storageKey);
@@ -369,9 +383,10 @@ export async function pruneUploads(
         continue;
       }
     }
-    await rt.adapter.delete({
+    // the count isn't trusted: some drivers report 0 rows for a delete that worked
+    await rt.adapter.deleteMany({
       model: "supportAttachment",
-      where: [{ field: "id", value: row.id }],
+      where: unattached,
     });
     pruned++;
   }

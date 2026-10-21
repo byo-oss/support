@@ -915,7 +915,7 @@ describe("events", () => {
   it("builds ticket events and never throws from onEvent", async () => {
     const event = ticketEvent(
       "support.ticket.created",
-      { id: "t1", organizationId: "o1" },
+      { id: "t1", organizationId: "o1", visibility: "private" },
       {
         actorId: "u1",
         userId: "u1",
@@ -928,6 +928,20 @@ describe("events", () => {
       organizationId: "o1",
       userId: "u1",
       actorId: "u1",
+    });
+    // every event says whether the ticket is private, for org fan-out
+    expect(event.data).toEqual({ ticketId: "t1", visibility: "private" });
+    expect(
+      ticketEvent(
+        "support.ticket.status_changed",
+        { id: "t2", organizationId: "o1", visibility: "organization" },
+        { actorId: null, data: { ticketId: "t2", from: "open", to: "solved" } },
+      ).data,
+    ).toEqual({
+      ticketId: "t2",
+      from: "open",
+      to: "solved",
+      visibility: "organization",
     });
     const errors: unknown[] = [];
     await expect(

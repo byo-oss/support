@@ -464,6 +464,7 @@ describe("status transitions", () => {
           ticketId: ticket.id,
           from,
           to,
+          visibility: ticket.visibility,
         });
       });
     }

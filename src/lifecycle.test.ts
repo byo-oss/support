@@ -298,6 +298,67 @@ describe("user delete without foreign keys", () => {
     expect(after.orphans).toEqual([]);
   });
 
+  it("removes a deleted agent's id from mentions and assignee events, past one page", async () => {
+    const s = await setup();
+    const context = await getContext(s.auth);
+    const gone = s.world.agents.admin.user.id;
+    const kept = s.world.agents.member.user.id;
+    const ticket = await insertTicket(s.auth, { assigneeId: kept });
+    const agentRow = (overrides: Partial<SupportMessageRow>) =>
+      insertMessage(s.auth, {
+        ticketId: ticket.id,
+        authorType: "agent",
+        userId: kept,
+        ...overrides,
+      });
+    // more rows naming them than one page of the scan holds (500)
+    const many: SupportMessageRow[] = [];
+    for (let i = 0; i < 520; i++) {
+      many.push(await agentRow({ kind: "note", mentions: [gone] }));
+    }
+    const both = await agentRow({ kind: "note", mentions: [kept, gone] });
+    const others = await agentRow({ kind: "note", mentions: [kept] });
+    const assignedTo = await agentRow({
+      kind: "event",
+      body: "",
+      data: { type: "assignee", from: kept, to: gone },
+    });
+    const assignedFrom = await agentRow({
+      kind: "event",
+      body: "",
+      data: { type: "assignee", from: gone, to: null },
+    });
+    const status = await agentRow({
+      kind: "event",
+      body: "",
+      data: { type: "status", from: "open", to: "pending" },
+    });
+
+    await context.internalAdapter.deleteUser(gone);
+
+    const after = await snapshot(s.auth);
+    const message = (id: string) => after.messages.find((m) => m.id === id);
+    for (const row of many) expect(message(row.id)?.mentions).toBeNull();
+    expect(message(both.id)?.mentions).toEqual([kept]);
+    expect(message(others.id)?.mentions).toEqual([kept]);
+    expect(message(assignedTo.id)?.data).toEqual({
+      type: "assignee",
+      from: kept,
+      to: null,
+    });
+    expect(message(assignedFrom.id)?.data).toEqual({
+      type: "assignee",
+      from: null,
+      to: null,
+    });
+    expect(message(status.id)?.data).toEqual({
+      type: "status",
+      from: "open",
+      to: "pending",
+    });
+    expect(JSON.stringify(after.messages)).not.toContain(gone);
+  });
+
   it("shows a deleted agent's tickets under assignee: none", async () => {
     const s = await setup();
     const context = await getContext(s.auth);

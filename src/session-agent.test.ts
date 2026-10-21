@@ -6,7 +6,11 @@ import type {
   SupportAuthorizeInput,
   SupportOptions,
 } from "./options";
-import type { SupportCannedReplyRow, SupportMessageRow } from "./schema";
+import type {
+  SupportAttachmentRow,
+  SupportCannedReplyRow,
+  SupportMessageRow,
+} from "./schema";
 import type { SupportAction } from "./statements";
 import {
   createTestAuth,
@@ -16,21 +20,70 @@ import {
   seedSupportWorld,
   type TestAuth,
 } from "./test-utils";
+import { memoryStorage } from "./testing/storage";
 import { createTicket } from "./tickets";
 
+const BASE = "http://localhost:3000/api/auth";
+
+/** A raw upload request carrying the caller's headers (cookie included). */
+function uploadRequest(path: string, headers: Headers): Request {
+  const bytes = new TextEncoder().encode("hello, file");
+  const withBody = new Headers(headers);
+  withBody.set("content-type", "text/plain");
+  withBody.set("content-length", String(bytes.byteLength));
+  return new Request(`${BASE}${path}`, {
+    method: "POST",
+    body: bytes,
+    headers: withBody,
+  });
+}
+
+/**
+ * Endpoints handed a `request` answer as a `Response`, and downloads always
+ * do. This reads a JSON answer as the JSON endpoints return it and turns an
+ * error answer into the rejection they throw (`{ status, body }`), so one
+ * assertion fits every endpoint. A served file stays a `Response`.
+ */
+async function settle(result: unknown): Promise<unknown> {
+  if (!(result instanceof Response)) return result;
+  if (!result.ok) {
+    throw { status: result.statusText, body: await result.json() };
+  }
+  const type = result.headers.get("content-type") ?? "";
+  return type.startsWith("application/json") ? result.json() : result;
+}
+
+type Target = {
+  auth: TestAuth;
+  ticketId: string;
+  cannedId: string;
+  attachmentId: string;
+  /** A new ticket of the same requester and org, so each merge/delete call has its own. */
+  freshTicket: () => Promise<string>;
+};
+
 async function setup(opts: SupportOptions = {}) {
-  const auth = createTestAuth({ staffOrganizationId: STAFF_ORG_ID, ...opts });
+  const storage = memoryStorage();
+  const auth = createTestAuth({
+    staffOrganizationId: STAFF_ORG_ID,
+    attachments: { storage },
+    ...opts,
+  });
   const world = await seedSupportWorld(auth);
   const rt = await authRuntime(auth, "session-agent.test");
-  const { ticket } = await createTicket(rt, {
-    subject: "Help",
-    body: "Hi",
-    channel: "web",
-    userId: world.customer.user.id,
-    organizationId: world.customerOrg.id,
-    verified: true,
-    actorId: world.customer.user.id,
-  });
+  const freshTicket = async () => {
+    const { ticket } = await createTicket(rt, {
+      subject: "Help",
+      body: "Hi",
+      channel: "web",
+      userId: world.customer.user.id,
+      organizationId: world.customerOrg.id,
+      verified: true,
+      actorId: world.customer.user.id,
+    });
+    return ticket.id;
+  };
+  const ticketId = await freshTicket();
   const { adapter } = await getContext(auth);
   const now = new Date();
   const canned = await adapter.create<
@@ -40,17 +93,42 @@ async function setup(opts: SupportOptions = {}) {
     model: "supportCannedReply",
     data: { title: "Seed", body: "Seed", createdAt: now, updatedAt: now },
   });
-  const target = { auth, ticketId: ticket.id, cannedId: canned.id };
+  const attachment = await adapter.create<
+    Omit<SupportAttachmentRow, "id">,
+    SupportAttachmentRow
+  >({
+    model: "supportAttachment",
+    data: {
+      ticketId,
+      messageId: null,
+      userId: world.agents.owner.user.id,
+      internal: false,
+      filename: "seed.txt",
+      contentType: "text/plain",
+      size: 4,
+      storageKey: "seed/seed.txt",
+      createdAt: now,
+    },
+  });
+  await storage.put({
+    key: "seed/seed.txt",
+    body: new TextEncoder().encode("seed"),
+    contentType: "text/plain",
+  });
+  const target: Target = {
+    auth,
+    ticketId,
+    cannedId: canned.id,
+    attachmentId: attachment.id,
+    freshTicket,
+  };
   return { auth, world, rt, target };
 }
 
 type EndpointCase = {
   name: string;
   action: SupportAction;
-  call: (
-    target: { auth: TestAuth; ticketId: string; cannedId: string },
-    headers: Headers,
-  ) => Promise<unknown>;
+  call: (target: Target, headers: Headers) => Promise<unknown>;
 };
 
 // every agent endpoint N08 owns, with the one action its gate asks for
@@ -119,6 +197,54 @@ const ENDPOINTS: EndpointCase[] = [
     action: "manage",
     call: ({ auth, cannedId }, headers) =>
       auth.api.deleteSupportCannedReply({ body: { id: cannedId }, headers }),
+  },
+  {
+    name: "mergeSupportTickets",
+    action: "update",
+    call: async ({ auth, freshTicket }, headers) => {
+      const [sourceId, targetId] = [await freshTicket(), await freshTicket()];
+      return auth.api.mergeSupportTickets({
+        body: { sourceId, targetId },
+        headers,
+      });
+    },
+  },
+  {
+    name: "deleteSupportTickets",
+    action: "delete",
+    call: async ({ auth, freshTicket }, headers) =>
+      auth.api.deleteSupportTickets({
+        body: { ids: [await freshTicket()] },
+        headers,
+      }),
+  },
+  {
+    name: "uploadSupportAttachmentAsAgent",
+    action: "reply",
+    call: async ({ auth, ticketId }, headers) =>
+      settle(
+        await auth.api.uploadSupportAttachmentAsAgent({
+          query: { ticketId, filename: "notes.txt" },
+          headers,
+          request: uploadRequest("/support/agent/upload", headers),
+        }),
+      ),
+  },
+  {
+    name: "getSupportAttachmentAsAgent",
+    action: "read",
+    call: async ({ auth, attachmentId }, headers) => {
+      const res = await settle(
+        await auth.api.getSupportAttachmentAsAgent({
+          query: { id: attachmentId },
+          headers,
+        }),
+      );
+      // the served file itself
+      expect(res).toBeInstanceOf(Response);
+      expect(await (res as Response).text()).toBe("seed");
+      return res;
+    },
   },
 ];
 

@@ -17,11 +17,14 @@ export type SupportEventType = (typeof SUPPORT_EVENT_TYPES)[number];
 
 /**
  * A support event: a `ByoEvent` whose subject is always the ticket. `data`
- * carries ids, statuses and kinds only, never message bodies:
+ * carries ids, statuses and kinds only, never message bodies, and always the
+ * ticket's `visibility` (`"private" | "organization"`) as of the event. A
+ * private ticket's events still carry its `organizationId`: a consumer that
+ * fans out by organization must skip `visibility: "private"`.
  *
- * | type | userId | data |
+ * | type | userId | data (plus `visibility`) |
  * |---|---|---|
- * | `support.ticket.created` | requester | `{ ticketId, number, channel, visibility }` |
+ * | `support.ticket.created` | requester | `{ ticketId, number, channel }` |
  * | `support.ticket.status_changed` | requester | `{ ticketId, from, to }` |
  * | `support.ticket.assigned` | new assignee | `{ ticketId, from, to }` (user ids or null) |
  * | `support.ticket.merged` | requester | `{ ticketId, sourceId, targetId }` (subject = target) |
@@ -42,11 +45,12 @@ export type SupportLogger = {
 
 /**
  * Builds a `SupportEvent` about a ticket: `occurredAt` now, subject the
- * ticket, `organizationId` from the ticket when it has one.
+ * ticket, `organizationId` from the ticket when it has one, and the ticket's
+ * `visibility` added to `data`.
  */
 export function ticketEvent(
   type: SupportEventType,
-  ticket: Pick<SupportTicketRow, "id" | "organizationId">,
+  ticket: Pick<SupportTicketRow, "id" | "organizationId" | "visibility">,
   input: {
     actorId: string | null;
     userId?: string | null;
@@ -61,7 +65,7 @@ export function ticketEvent(
     ...(input.userId ? { userId: input.userId } : {}),
     ...(ticket.organizationId ? { organizationId: ticket.organizationId } : {}),
     subject: { type: "supportTicket", id: ticket.id },
-    data: input.data,
+    data: { ...input.data, visibility: ticket.visibility },
   };
 }
 

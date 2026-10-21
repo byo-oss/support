@@ -1,16 +1,26 @@
-import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { NoSuchKey } from "@aws-sdk/client-s3";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { rawRelay } from "./inbound/raw-relay";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { constantTimeEqual, rawRelay, secretsMatch } from "./inbound/raw-relay";
 import { testSupportInboundSource } from "./testing/inbound";
 import { type WrapsInboundS3Client, wrapsInbound, wrapsMailer } from "./wraps";
 
-vi.mock("node:crypto", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:crypto")>();
-  return { ...actual, timingSafeEqual: vi.fn(actual.timingSafeEqual) };
-});
+// secrets are compared as two Web Crypto SHA-256 digests (no node:crypto)
+let digest: ReturnType<typeof spyOnDigest>;
+const spyOnDigest = () => vi.spyOn(globalThis.crypto.subtle, "digest");
+
+/** Every digest taken since the spy was reset: its algorithm and its bytes. */
+async function digests() {
+  return Promise.all(
+    digest.mock.calls.map(async ([algorithm], i) => ({
+      algorithm,
+      bytes: new Uint8Array(
+        (await digest.mock.results[i]?.value) as ArrayBuffer,
+      ),
+    })),
+  );
+}
 
 const SECRET = "relay-secret-0123456789";
 const KEY = "wraps-inbound-key-abcdef";
@@ -136,8 +146,49 @@ const wrapsSource = (client: WrapsInboundS3Client, maxBytes?: number) =>
     maxBytes,
   });
 
+beforeEach(() => {
+  digest = spyOnDigest();
+});
+
 afterEach(() => {
-  vi.mocked(timingSafeEqual).mockClear();
+  digest.mockRestore();
+});
+
+describe("secretsMatch", () => {
+  it("compares SHA-256 digests of both sides with a constant-time byte compare", async () => {
+    expect(await secretsMatch("s", "s")).toBe(true);
+    expect(await secretsMatch("s", "t")).toBe(false);
+    expect(await secretsMatch("x".repeat(500), "s")).toBe(false);
+    const taken = await digests();
+    expect(taken).toHaveLength(6);
+    for (const { algorithm, bytes } of taken) {
+      expect(algorithm).toBe("SHA-256");
+      expect(bytes.byteLength).toBe(32);
+    }
+  });
+
+  it("never matches an absent or empty value, without hashing", async () => {
+    for (const given of [null, undefined, ""]) {
+      expect(await secretsMatch(given, "s")).toBe(false);
+    }
+    expect(await secretsMatch("s", "")).toBe(false);
+    expect(digest).not.toHaveBeenCalled();
+  });
+
+  it("constantTimeEqual compares every byte and refuses different lengths", () => {
+    const a = new Uint8Array([1, 2, 3]);
+    expect(constantTimeEqual(a, new Uint8Array([1, 2, 3]))).toBe(true);
+    expect(constantTimeEqual(a, new Uint8Array([1, 2, 4]))).toBe(false);
+    expect(constantTimeEqual(a, new Uint8Array([0, 2, 3]))).toBe(false);
+    expect(constantTimeEqual(a, new Uint8Array([1, 2]))).toBe(false);
+  });
+
+  it("the inbound sources import no Node built-in", () => {
+    for (const file of ["./inbound/raw-relay.ts", "./wraps.ts"]) {
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, file).not.toMatch(/from "node:/);
+    }
+  });
 });
 
 describe("rawRelay", () => {
@@ -190,20 +241,23 @@ describe("rawRelay", () => {
     expect("raw" in result).toBe(true);
   });
 
-  it("compares in constant time, on equal-length buffers even when lengths differ", async () => {
+  it("compares 32-byte SHA-256 digests of both sides, even when lengths differ", async () => {
     const source = rawRelay({ secret: "s" });
-    const spy = vi.mocked(timingSafeEqual);
     const long = "x".repeat(500);
     expect(
       await source.receive(relayRequest({ auth: `Bearer ${long}` })),
     ).toEqual({ reject: 401 });
-    expect(spy).toHaveBeenCalledTimes(1);
-    const [a, b] = spy.mock.calls[0] as [Uint8Array, Uint8Array];
-    expect(a.byteLength).toBe(b.byteLength);
+    let taken = await digests();
+    expect(taken.map((d) => [d.algorithm, d.bytes.byteLength])).toEqual([
+      ["SHA-256", 32],
+      ["SHA-256", 32],
+    ]);
 
     const ok = await source.receive(relayRequest({ auth: "Bearer s" }));
     expect("raw" in ok).toBe(true);
-    expect(spy).toHaveBeenCalledTimes(2);
+    taken = await digests();
+    expect(taken).toHaveLength(4);
+    expect(taken[2]?.bytes).toEqual(taken[3]?.bytes);
   });
 
   it("answers 413 past maxBytes, by Content-Length or by bytes read", async () => {
@@ -275,13 +329,15 @@ describe("wrapsInbound", () => {
     expect(s3.calls).toEqual([]);
   });
 
-  it("compares the key in constant time", async () => {
+  it("compares the key as two 32-byte SHA-256 digests", async () => {
     const source = wrapsSource(fakeS3({ "raw/msg-1": RAW }));
-    const spy = vi.mocked(timingSafeEqual);
     await source.receive(wrapsRequest({ key: "k" }));
-    expect(spy).toHaveBeenCalledTimes(1);
-    const [a, b] = spy.mock.calls[0] as [Uint8Array, Uint8Array];
-    expect(a.byteLength).toBe(b.byteLength);
+    const taken = await digests();
+    expect(taken.map((d) => [d.algorithm, d.bytes.byteLength])).toEqual([
+      ["SHA-256", 32],
+      ["SHA-256", 32],
+    ]);
+    expect(taken[0]?.bytes).not.toEqual(taken[1]?.bytes);
   });
 
   it("accepts the EventBridge envelope and a bare detail", async () => {

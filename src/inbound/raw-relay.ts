@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { SupportInboundSource } from "../options";
 
 export type RawRelayOptions = {
@@ -11,20 +10,39 @@ export type RawRelayOptions = {
 /** The default cap for one raw message, the same as `inbound.maxBytes`. */
 export const DEFAULT_INBOUND_MAX_BYTES = 26_214_400;
 
-const sha256 = (value: string) => createHash("sha256").update(value).digest();
+/** SHA-256 of a string's UTF-8 bytes, through Web Crypto (any runtime). */
+async function sha256(value: string): Promise<Uint8Array> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return new Uint8Array(digest);
+}
+
+/**
+ * Compares two byte arrays without stopping at the first difference: the
+ * time taken depends only on their length.
+ */
+export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  let diff = 0;
+  for (let i = 0; i < a.byteLength; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
 
 /**
  * Compares a secret a caller sent with the configured one in constant time.
- * Both sides are hashed first, so `timingSafeEqual` always gets two buffers of
- * the same length and the time taken doesn't leak the secret's length either.
- * An absent or empty value never matches.
+ * Both sides are hashed with SHA-256 (Web Crypto) first, so the compare always
+ * runs over two 32-byte digests and the time taken doesn't leak the secret's
+ * length either. An absent or empty value never matches.
  */
-export function secretsMatch(
+export async function secretsMatch(
   given: string | null | undefined,
   expected: string,
-): boolean {
+): Promise<boolean> {
   if (!given || !expected) return false;
-  return timingSafeEqual(sha256(given), sha256(expected));
+  const [a, b] = await Promise.all([sha256(given), sha256(expected)]);
+  return constantTimeEqual(a, b);
 }
 
 /** The declared `Content-Length`, or null when it's absent or not a number. */
@@ -105,7 +123,7 @@ export function rawRelay(options: RawRelayOptions): SupportInboundSource {
   }
   return {
     async receive(request) {
-      if (!secretsMatch(bearer(request.headers), secret)) {
+      if (!(await secretsMatch(bearer(request.headers), secret))) {
         return { reject: 401 };
       }
       const declared = declaredLength(request.headers);

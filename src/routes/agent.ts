@@ -162,8 +162,11 @@ async function changeField(
  * `getSupportTicketAsAgent`, `replyAsSupportAgent`, `updateSupportTickets`,
  * `markSupportTicketSeenAsAgent`, `listSupportTags`, plus the canned-reply
  * endpoints from `cannedEndpoints` in `../canned`. Leave the return type
- * inferred so `$InferServerPlugin` sees every endpoint. Every endpoint that takes a ticket id resolves
- * it with `resolveMergedTicket` first and works on the resolved ticket's id.
+ * inferred so `$InferServerPlugin` sees every endpoint. Every endpoint here
+ * that takes a ticket id resolves it with `resolveMergedTicket` first and
+ * works on the resolved ticket's id; the only ticket-id endpoints that don't
+ * are `mergeSupportTickets` and `deleteSupportTickets`, which act on the ids
+ * given.
  *
  * Each endpoint first calls `requireAgent` with exactly one action: `read`
  * for the queue, a ticket, mark-seen and tags; `reply` for replies and
@@ -344,7 +347,9 @@ export function agentEndpoints(opts: ResolvedSupportOptions) {
      * Bulk update of 1–100 tickets (each followed through merges, deduped;
      * unknown ids ignored): `status`, `priority`, `assigneeId` (must be an
      * agent; null unassigns), `addTags`, `removeTags`. Every input is checked
-     * before the first write. Returns how many tickets were updated.
+     * before the first write. Returns `updated`: how many tickets matched
+     * (after merge-follow and dedupe), including any the update left
+     * unchanged.
      */
     updateSupportTickets: createAuthEndpoint(
       "/support/agent/update",

@@ -33,7 +33,7 @@ export const authClient = createAuthClient({ plugins: [supportClient()] });
 
 // UI (client components)
 import { SupportInbox, SupportWidget } from "@byo-oss/support/react";
-<SupportWidget client={authClient} organizationId={orgId} onNavigate={(href) => router.push(href)} />   // customers
+<SupportWidget client={authClient} organizationId={orgId} onNavigate={(href) => router.push(href)} />   // customers; ticketId? opens that ticket's thread (email links: route ticketPath(id) to a page rendering <SupportWidget ticketId={id} />)
 <SupportInbox client={authClient} agents={[{ id, name, image? }]} onNavigate={(href) => router.push(href)} />   // staff; agents = staff org members for the assignee/@mention pickers
 // props on both: client, onNavigate, renderMessage(message, fallback), pollInterval (15000), labels, className and per-part classes (widget: listClassName threadClassName messageClassName composerClassName buttonClassName; inbox: queueClassName instead of listClassName)
 // Tailwind v4: @source "../node_modules/@byo-oss/support/dist";
@@ -74,8 +74,8 @@ getSupportAttachment       GET  /support/attachment      query { id } → the fi
 listSupportTickets         GET  /support/agent/tickets   read    query { status?, assignee? (id|"me"|"none"), tag?, organizationId?, q?, cursor? } → { tickets, nextCursor, counts: { open, pending, unassigned, mine }, features: { attachments, merge } }
 getSupportTicketAsAgent    GET  /support/agent/ticket    read    query { id } → { ticket, messages (notes + events too), attachments }
 replyAsSupportAgent        POST /support/agent/reply     reply   body { ticketId, body, internal?, status?, mentions?, attachmentIds? } → { message }  (reply sets pending unless status given; internal = note)
-updateSupportTickets       POST /support/agent/update    update  body { ids (1-100), status?, priority? (or null), assigneeId? (or null), addTags?, removeTags? } → { updated }
-mergeSupportTickets        POST /support/agent/merge     update  body { sourceId, targetId } → { ticket } (target); same requester and org only
+updateSupportTickets       POST /support/agent/update    update  body { ids (1-100), status?, priority? (or null), assigneeId? (or null), addTags?, removeTags? } → { updated } (tickets matched after merge-follow and dedupe, unchanged ones included)
+mergeSupportTickets        POST /support/agent/merge     update  body { sourceId, targetId } → { ticket } (target); same requester and org only; target takes the later lastMessageAt
 deleteSupportTickets       POST /support/agent/delete    delete  body { ids (1-100) } → { deleted }
 markSupportTicketSeenAsAgent POST /support/agent/mark-seen read body { id } → { ok: true }
 listSupportTags            GET  /support/agent/tags      read    → string[] (sorted, deduped; reads at most 10,000 tag rows)
@@ -90,7 +90,7 @@ processSupportDeliveries   (no path)  → { sent, skipped, retrying, failed, has
 receiveSupportEmail        POST /support/inbound  raw request → 202 { ok: true } (also for dropped and duplicate mail), or the source's reject status; 404 INBOUND_NOT_CONFIGURED without inbound; 502 when the source throws
 
 // limits: subject 1-200 (trimmed), body 1-50000, canned title 200 / body 50000, ids ≤ 100, attachmentIds ≤ 10, mentions ≤ 20, q ≤ 200, cursor ≤ 10000, tag 1-50 chars [a-z0-9_-]
-// lists: newest lastMessageAt first; q = "#123"/"123" exact number, else case-insensitive subject contains; cursor is opaque { at, ids }; every ticket-id endpoint follows mergedIntoId
+// lists: newest lastMessageAt first; q = "#123"/"123" exact number, else case-insensitive subject contains; cursor is opaque { at, ids }; every ticket-id endpoint follows mergedIntoId except merge and delete (they act on the ids given)
 // statuses: open | pending | solved | closed. Agent reply → pending. Customer reply on pending/solved → open. Requester: solve (from open/pending), reopen (from solved). closed takes no replies (TICKET_CLOSED); mail to a closed ticket opens a follow-up ticket (followup_of event).
 // customers never receive: replyToken, assigneeId, agentSeenAt, mentions, notes, events other than status/merged, verified, emailMessageId, internal attachments
 
@@ -133,15 +133,15 @@ await deleteOrganizationData(auth, organizationId)        // → { tickets }; fo
 await deleteMemberData(auth, { userId, organizationId })  // → { unassigned }
 await deleteSupportRequesterData(auth, { email })         // → { tickets, messages }; erases an account-less person
 await linkSupportRequester(auth, userId)                  // → { tickets, messages }
-// all join a better-auth transaction (runWithTransaction). User delete: FK set null on SQL, a user.delete hook elsewhere; copies of their email are cleared.
+// all join a better-auth transaction (runWithTransaction). User delete: FK set null on SQL, a user.delete hook elsewhere; copies of their email are cleared; on every adapter the hook removes their id from message mentions and nulls it in assignee event data (from/to).
 // with @byo-oss/core: sweepAll(auth), deleteOrganizationData(auth, orgId), deleteMemberData(auth, input) reach support through its `byo` hooks
 
 ## Events → notifications
 
 import { createEventBus } from "@byo-oss/core";
 support({ onEvent: createEventBus([async (event): Promise<void> => { /* route */ }]) })
-// ByoEvent: { type, occurredAt, actorId, userId?, organizationId?, subject: { type: "supportTicket", id }, data }. In-process, best-effort, no bodies in data.
-// support.ticket.created      userId requester   { ticketId, number, channel, visibility }
+// ByoEvent: { type, occurredAt, actorId, userId?, organizationId?, subject: { type: "supportTicket", id }, data }. In-process, best-effort, no bodies in data. Every data also has visibility ("private"|"organization"): private tickets' events still carry organizationId, so org fan-out must skip visibility "private".
+// support.ticket.created      userId requester   { ticketId, number, channel }
 // support.ticket.status_changed userId requester { ticketId, from, to }
 // support.ticket.assigned     userId new assignee (absent if unassigned) { ticketId, from, to }
 // support.ticket.merged       userId requester   { ticketId, sourceId, targetId }

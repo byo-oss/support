@@ -260,6 +260,7 @@ describe("events from a real flow", () => {
       ticketId: first.id,
       messageId: agentReply.id,
       status: "pending",
+      visibility: "private",
     });
 
     const [customerReplied] = ofType(s.events, "support.customer.replied");
@@ -272,6 +273,7 @@ describe("events from a real flow", () => {
       ticketId: first.id,
       messageId: customerReply.id,
       channel: "web",
+      visibility: "private",
     });
 
     const [noteAdded] = ofType(s.events, "support.note.added");
@@ -282,7 +284,11 @@ describe("events from a real flow", () => {
     });
     // a note is about no one in particular: nobody to forward it to
     expect(noteAdded).not.toHaveProperty("userId");
-    expect(noteAdded?.data).toEqual({ ticketId: first.id, messageId: note.id });
+    expect(noteAdded?.data).toEqual({
+      ticketId: first.id,
+      messageId: note.id,
+      visibility: "private",
+    });
 
     const [mentioned] = ofType(s.events, "support.agent.mentioned");
     expect(ofType(s.events, "support.agent.mentioned")).toHaveLength(1);
@@ -295,6 +301,7 @@ describe("events from a real flow", () => {
       ticketId: first.id,
       messageId: note.id,
       kind: "note",
+      visibility: "private",
     });
 
     const [assigned] = ofType(s.events, "support.ticket.assigned");
@@ -307,6 +314,7 @@ describe("events from a real flow", () => {
       ticketId: first.id,
       from: null,
       to: admin,
+      visibility: "private",
     });
 
     const changes = ofType(s.events, "support.ticket.status_changed");
@@ -317,7 +325,11 @@ describe("events from a real flow", () => {
       organizationId: orgId,
       subject: { type: "supportTicket", id: first.id },
     });
-    expect(solved?.data).toMatchObject({ ticketId: first.id, to: "solved" });
+    expect(solved?.data).toMatchObject({
+      ticketId: first.id,
+      to: "solved",
+      visibility: "private",
+    });
     expect(solved?.data.from).toEqual(expect.any(String));
     expect(solved?.data.from).not.toBe("solved");
 
@@ -334,7 +346,12 @@ describe("events from a real flow", () => {
       ticketId: first.id,
       sourceId: second.id,
       targetId: first.id,
+      visibility: "private",
     });
+    // every event says whether its ticket is private (org fan-out skips those)
+    for (const event of s.events) {
+      expect(event.data.visibility, event.type).toBe("private");
+    }
   });
 
   it("never carries a message body or a subject in an event", async () => {

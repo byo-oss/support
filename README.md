@@ -225,7 +225,7 @@ The owner role has every `support` action once step 2 is done. The other route i
 
 - **What customers get back.** One serializer: ticket `id, number, subject, status, priority, channel, organizationId, visibility, rating, createdAt, updatedAt, lastMessageAt, solvedAt, unread, isRequester`; `isRequester` is false for an organization teammate viewing a shared ticket (the widget hides solve, reopen, rate and share for them; the server refuses those with 403); messages of kind `reply`, plus `event` rows of type `status` and `merged`. Never `replyToken`, `assigneeId`, `agentSeenAt`, `mentions`, notes, other events, `verified`, `emailMessageId` or internal attachments. Agents appear by `{ name, image }` only.
 - **Statuses.** A new ticket is `open`. An agent reply sets `pending` unless the request sets a `status`. A customer reply on `pending` or `solved` reopens it. The requester can solve (from `open` or `pending`) and reopen (from `solved`). Agents can set any status. The sweep closes `solved` tickets after `autoCloseAfter`. A `closed` ticket takes no replies (`TICKET_CLOSED`): mail to it opens a new ticket with a `followup_of` event.
-- **Merging.** An agent can merge a ticket into another with the same requester and the same organization (`MERGE_NOT_ALLOWED` otherwise). Messages, tags, attachments and deliveries move to the target; the stricter `visibility` (`private`) and `verified` (`false`) win; the source is closed with `mergedIntoId`. Every endpoint that takes a ticket id follows `mergedIntoId`, with the access rule re-applied to the target.
+- **Merging.** An agent can merge a ticket into another with the same requester and the same organization (`MERGE_NOT_ALLOWED` otherwise). Messages, tags, attachments and deliveries move to the target; the stricter `visibility` (`private`) and `verified` (`false`) win, and the target keeps the later `lastMessageAt` of the two; the source is closed with `mergedIntoId`. Every endpoint that takes a ticket id follows `mergedIntoId`, with the access rule re-applied to the target, except `mergeSupportTickets` and `deleteSupportTickets`, which act on the ids given.
 
 ## Email replies
 
@@ -254,7 +254,7 @@ support({
 
 What gets sent:
 
-- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`: route that path to your widget). Attachments go as that link, not as files.
+- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget ticketId={id} />`: with `ticketId` the widget starts open on that ticket's thread, Back returns to the list, and a ticket the signed-in user can't read shows the thread's error state. For example `` ticketPath: (id) => `/help?ticket=${id}` `` with the help page reading `ticket` from the query. Attachments go as that link, not as files.
 - **The address** is resolved when the mail is sent: the account's email if verified (or any, with `requireVerifiedEmail: false`), else the account-less requester's `requesterEmail`. No address: the delivery is `skipped`.
 - **Delay.** A reply is due `replyDelay` after it was written (2 minutes by default) and skipped if the requester has seen the ticket since. With `replyDelay: 0` and better-auth's `advanced.backgroundTasks.handler` set, it sends inline; otherwise the sweep sends it.
 - **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known (`wrapsMailer` reports the SES id, not the header, so it stores none).
@@ -378,7 +378,7 @@ await deleteSupportRequesterData(auth, { email }); // → { tickets, messages }
 await linkSupportRequester(auth, userId); // → { tickets, messages }
 ```
 
-- **A user is deleted.** Foreign keys null `userId` (requester, author, uploader) and `assigneeId` on SQL; a `user.delete` hook does the same on adapters without them (memory, MongoDB) and clears any stored copy of their email. A user deleted outside better-auth keeps those copies until `deleteSupportRequesterData` runs for the address.
+- **A user is deleted.** Foreign keys null `userId` (requester, author, uploader) and `assigneeId` on SQL; a `user.delete` hook does the same on adapters without them (memory, MongoDB) and clears any stored copy of their email. On every adapter the hook also removes their id from message `mentions` and sets it to null in `assignee` event rows (`from`/`to`), which no foreign key reaches. A user deleted outside better-auth keeps those copies until `deleteSupportRequesterData` runs for the address.
 - **An account-less person** (someone who only emailed) asks to be erased: `deleteSupportRequesterData` deletes their tickets with all their messages, tags and attachments, and anonymizes their messages on other tickets.
 - **An organization is removed outside the organization plugin** and leaves its blobs behind until `deleteOrganizationData` runs.
 - **With `@byo-oss/core`** the fan-out reaches support through its `byo` hooks, so one call cleans every BYO plugin:
@@ -402,11 +402,11 @@ await linkSupportRequester(auth, userId); // → { tickets, messages }
 
 ## Events to notifications
 
-Support emits an event after every write that matters, through `onEvent`. Events are in-process and best-effort: a handler that throws is logged and never fails the request, and nothing is stored or retried. `data` carries ids, statuses and kinds, never message bodies.
+Support emits an event after every write that matters, through `onEvent`. Events are in-process and best-effort: a handler that throws is logged and never fails the request, and nothing is stored or retried. `data` carries ids, statuses and kinds, never message bodies, and always the ticket's `visibility` (`"private"` or `"organization"`) besides the fields below.
 
-| Event | `userId` | `data` |
+| Event | `userId` | `data` (plus `visibility`) |
 |---|---|---|
-| `support.ticket.created` | requester | `{ ticketId, number, channel, visibility }` |
+| `support.ticket.created` | requester | `{ ticketId, number, channel }` |
 | `support.ticket.status_changed` | requester | `{ ticketId, from, to }` |
 | `support.ticket.assigned` | the new assignee (absent when unassigned) | `{ ticketId, from, to }` |
 | `support.ticket.merged` | requester | `{ ticketId, sourceId, targetId }` (subject is the target) |
@@ -415,7 +415,7 @@ Support emits an event after every write that matters, through `onEvent`. Events
 | `support.note.added` | none | `{ ticketId, messageId }` |
 | `support.agent.mentioned` | the mentioned agent (one event each) | `{ ticketId, messageId, kind }` |
 
-Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent.
+Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`: consumers that fan out by organization must skip `visibility: "private"`.
 
 Wire them to [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) with `createEventBus` from `@byo-oss/core`:
 
@@ -497,7 +497,7 @@ All of these are better-auth endpoints: call them through `auth.api` on the serv
 | `listSupportTickets` | GET `/support/agent/tickets` | permission-gated `support:read` | query `status?`, `assignee?` (a user id, `"me"` or `"none"`), `tag?`, `organizationId?`, `q?`, `cursor?` | `{ tickets, nextCursor, counts, features: { attachments, merge } }` |
 | `getSupportTicketAsAgent` | GET `/support/agent/ticket` | permission-gated `support:read` | query `id` | `{ ticket, messages, attachments }` (every message, notes and events included) |
 | `replyAsSupportAgent` | POST `/support/agent/reply` | permission-gated `support:reply` | body `ticketId`, `body`, `internal?` (a note), `status?`, `mentions?` (agent user ids, up to 20), `attachmentIds?` | `{ message }` |
-| `updateSupportTickets` | POST `/support/agent/update` | permission-gated `support:update` | body `ids` (1 to 100), `status?`, `priority?` (or `null`), `assigneeId?` (or `null`), `addTags?`, `removeTags?` | `{ updated }` |
+| `updateSupportTickets` | POST `/support/agent/update` | permission-gated `support:update` | body `ids` (1 to 100), `status?`, `priority?` (or `null`), `assigneeId?` (or `null`), `addTags?`, `removeTags?` | `{ updated }`: the tickets matched, after merge-follow and dedupe, including any the update left unchanged |
 | `mergeSupportTickets` | POST `/support/agent/merge` | permission-gated `support:update` | body `sourceId`, `targetId` | `{ ticket }` (the target) |
 | `deleteSupportTickets` | POST `/support/agent/delete` | permission-gated `support:delete` | body `ids` (1 to 100) | `{ deleted }` |
 | `markSupportTicketSeenAsAgent` | POST `/support/agent/mark-seen` | permission-gated `support:read` | body `id` | `{ ok: true }` |

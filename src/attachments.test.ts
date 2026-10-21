@@ -1017,6 +1017,40 @@ describe("pruning unattached uploads", () => {
     expect(await rows(s)).toEqual([]);
     expect(storage.keys).toEqual([]);
   });
+  it("keeps an upload a reply binds between the sweep's read and its delete, with its blob", async () => {
+    const s = await setup();
+    const { ticket } = await createTicket(s, s.w.customer);
+    const a = await uploaded(s, s.w.customer, { ticketId: ticket.id });
+    const b = await uploaded(s, s.w.customer, { ticketId: ticket.id });
+    for (const id of [a.id, b.id]) {
+      await updateRow(s, "supportAttachment", id, {
+        createdAt: new Date(Date.now() - 2 * DAY),
+      });
+    }
+    const rt = await authRuntime(s.auth, "t");
+    const { adapter } = rt;
+    let bound = false;
+    // `a` gets attached right after the sweep listed it as stale
+    const racing: typeof adapter = Object.create(adapter);
+    racing.findOne = async (query) => {
+      if (!bound && query.model === "supportAttachment") {
+        bound = true;
+        await adapter.update({
+          model: "supportAttachment",
+          where: [{ field: "id", value: a.id }],
+          update: { messageId: "msg-bound-meanwhile" },
+        });
+      }
+      return adapter.findOne(query);
+    };
+    expect(await pruneUploads({ ...rt, adapter: racing }, new Date())).toBe(1);
+    expect(bound).toBe(true);
+    const left = await rows(s);
+    expect(left.map((row) => [row.id, row.messageId])).toEqual([
+      [a.id, "msg-bound-meanwhile"],
+    ]);
+    expect(s.storage.keys).toEqual([`support/_/${a.id}`]);
+  });
 });
 
 // ---------------------------------------------------------------------------

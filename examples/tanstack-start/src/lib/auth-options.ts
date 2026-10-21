@@ -24,7 +24,8 @@ export const authOptions = {
         from: "Example Support <support@example.dev>",
         replyDomain: "support.example.dev",
         appUrl: "http://localhost:3000",
-        ticketPath: () => "/help",
+        // links in support mail open the ticket in the widget on /help
+        ticketPath: (id) => `/help?ticket=${id}`,
         replyDelay: 0,
         // the seeded customer has no verified address
         requireVerifiedEmail: false,

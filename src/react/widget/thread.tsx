@@ -104,25 +104,20 @@ export function ThreadView({
     return done;
   };
 
-  const present = async (
-    attachment: WireCustomerAttachment,
-    mode: "open" | "download",
-  ) => {
+  // saved, never rendered: a blob URL shares this page's origin and skips the
+  // download endpoint's serving headers, so a file is never opened as a page
+  const download = async (attachment: WireCustomerAttachment) => {
     const blob = await thread.openAttachment(attachment.id);
     setAttachmentError(blob === null);
     if (!blob) return;
     const url = URL.createObjectURL(blob);
-    if (mode === "open") {
-      window.open(url, "_blank", "noopener");
-    } else {
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = attachment.filename;
-      link.rel = "noopener";
-      document.body.append(link);
-      link.click();
-      link.remove();
-    }
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = attachment.filename;
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
   };
 
@@ -191,7 +186,7 @@ export function ThreadView({
                   message={message}
                   attachments={byMessage.get(message.id) ?? []}
                   labels={labels}
-                  onPresent={present}
+                  onDownload={download}
                   onNavigate={onNavigate}
                 />
               );
@@ -323,17 +318,14 @@ function MessageBody({
   message,
   attachments,
   labels,
-  onPresent,
+  onDownload,
   onNavigate,
 }: {
   message: WireCustomerMessage;
   attachments: WireCustomerAttachment[];
   labels: WidgetLabels;
   onNavigate: (href: string) => void;
-  onPresent: (
-    attachment: WireCustomerAttachment,
-    mode: "open" | "download",
-  ) => Promise<void>;
+  onDownload: (attachment: WireCustomerAttachment) => Promise<void>;
 }) {
   if (message.kind === "event") {
     const text = eventText(message, labels);
@@ -375,14 +367,7 @@ function MessageBody({
               </span>
               <button
                 type="button"
-                onClick={() => void onPresent(attachment, "open")}
-                className={cn("rounded px-1 underline", focusRing)}
-              >
-                {labels.openAttachment(attachment.filename)}
-              </button>
-              <button
-                type="button"
-                onClick={() => void onPresent(attachment, "download")}
+                onClick={() => void onDownload(attachment)}
                 className={cn("rounded px-1 underline", focusRing)}
               >
                 {labels.downloadAttachment(attachment.filename)}

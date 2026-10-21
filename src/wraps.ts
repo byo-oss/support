@@ -145,7 +145,9 @@ export function wrapsInbound(
 
   return {
     async receive(request) {
-      if (!secretsMatch(request.headers.get("x-wraps-inbound-key"), key)) {
+      if (
+        !(await secretsMatch(request.headers.get("x-wraps-inbound-key"), key))
+      ) {
         return { reject: 401 };
       }
       const declared = declaredLength(request.headers);

@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { SUPPORT_ERROR_CODES } from "./error-codes";
 import type { SupportAcceptSessionInput, SupportOptions } from "./options";
-import type { SupportMessageRow, SupportTicketRow } from "./schema";
+import type {
+  SupportAttachmentRow,
+  SupportMessageRow,
+  SupportTicketRow,
+} from "./schema";
 import {
   createTestAuth,
   getContext,
@@ -11,6 +15,7 @@ import {
   seedSupportWorld,
   type TestAuth,
 } from "./test-utils";
+import { memoryStorage } from "./testing/storage";
 
 // PRD #7, customer half: every customer endpoint asks `acceptSession` first,
 // reads included.
@@ -26,15 +31,66 @@ const unauthorized = expect.objectContaining({ status: "UNAUTHORIZED" });
 let auth: TestAuth;
 let w: SupportTestWorld;
 let ticketId: string;
+let attachmentId: string;
+
+const BASE = "http://localhost:3000/api/auth";
+
+/** A raw upload request carrying the caller's headers (cookie included). */
+function uploadRequest(headers: Headers): Request {
+  const bytes = new TextEncoder().encode("hello, file");
+  const withBody = new Headers(headers);
+  withBody.set("content-type", "text/plain");
+  withBody.set("content-length", String(bytes.byteLength));
+  return new Request(`${BASE}/support/upload`, {
+    method: "POST",
+    body: bytes,
+    headers: withBody,
+  });
+}
+
+/**
+ * Endpoints handed a `request` answer as a `Response`, and downloads always
+ * do. This reads a JSON answer as the JSON endpoints return it and turns an
+ * error answer into the rejection they throw (`{ status, body }`), so one
+ * assertion fits every endpoint. A served file stays a `Response`.
+ */
+async function settle(result: unknown): Promise<unknown> {
+  if (!(result instanceof Response)) return result;
+  if (!result.ok) {
+    throw { status: result.statusText, body: await result.json() };
+  }
+  const type = result.headers.get("content-type") ?? "";
+  return type.startsWith("application/json") ? result.json() : result;
+}
+
+const upload = async (headers: Headers) =>
+  settle(
+    await auth.api.uploadSupportAttachment({
+      query: { ticketId, filename: "notes.txt" },
+      headers,
+      request: uploadRequest(headers),
+    }),
+  ) as Promise<{ attachment: { id: string } }>;
 
 async function setup(opts: SupportOptions = {}) {
-  auth = createTestAuth({ staffOrganizationId: STAFF_ORG_ID, ...opts });
+  auth = createTestAuth({
+    staffOrganizationId: STAFF_ORG_ID,
+    attachments: { storage: memoryStorage() },
+    ...opts,
+  });
   w = await seedSupportWorld(auth);
   const { ticket } = await auth.api.createSupportTicket({
     body: { subject: "Existing", body: "Hello" },
     headers: w.customer.headers,
   });
   ticketId = ticket.id;
+  // the customer's own upload, attached to a reply: readable on their ticket
+  const { attachment } = await upload(w.customer.headers);
+  await auth.api.replyToSupportTicket({
+    body: { ticketId, body: "See file", attachmentIds: [attachment.id] },
+    headers: w.customer.headers,
+  });
+  attachmentId = attachment.id;
 }
 
 /** Each customer endpoint, called with valid input on the customer's own ticket. */
@@ -60,11 +116,24 @@ const endpoints = {
     }),
   markSupportTicketSeen: (headers: Headers) =>
     auth.api.markSupportTicketSeen({ body: { id: ticketId }, headers }),
+  uploadSupportAttachment: (headers: Headers) => upload(headers),
+  getSupportAttachment: async (headers: Headers) => {
+    const res = await settle(
+      await auth.api.getSupportAttachment({
+        query: { id: attachmentId },
+        headers,
+      }),
+    );
+    // the served file itself
+    expect(res).toBeInstanceOf(Response);
+    expect(await (res as Response).text()).toBe("hello, file");
+    return res;
+  },
 };
 type EndpointName = keyof typeof endpoints;
 const NAMES = Object.keys(endpoints) as EndpointName[];
 
-/** What every endpoint could have written: the tickets and all their messages. */
+/** What every endpoint could have written: the tickets, their messages and attachments. */
 async function snapshot() {
   const { adapter } = await getContext(auth);
   const tickets = await adapter.findMany<SupportTicketRow>({
@@ -77,7 +146,12 @@ async function snapshot() {
     where: [],
     limit: 100,
   });
-  return { tickets, messages };
+  const attachments = await adapter.findMany<SupportAttachmentRow>({
+    model: "supportAttachment",
+    where: [],
+    limit: 100,
+  });
+  return { tickets, messages, attachments };
 }
 
 const withHeader = (base: Headers, name: string, value: string) => {

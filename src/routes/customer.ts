@@ -4,7 +4,7 @@ import {
   sessionMiddleware,
 } from "better-auth/api";
 import * as z from "zod";
-import { checkSession, myOrganizationIds, requireCustomer } from "../access";
+import { checkSession, requireCustomer } from "../access";
 import {
   endpointRuntime,
   findAll,
@@ -242,8 +242,11 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
           throw notAllowed();
         }
         if (organizationId) {
-          const orgIds = await myOrganizationIds(rt.adapter, me);
-          if (!orgIds.includes(organizationId)) throw notAMember();
+          const member = await findMember(rt.adapter, {
+            userId: me,
+            organizationId,
+          });
+          if (!member) throw notAMember();
         }
         const { ticket } = await createTicket(rt, {
           subject,

@@ -214,6 +214,51 @@ describe("lifecycle on PGlite", { timeout: 30_000 }, () => {
     expect(JSON.stringify(after)).not.toContain(PAT);
   });
 
+  it("user delete removes their id from mentions and assignee events (no foreign key reaches json)", async () => {
+    const s = await setup();
+    const { internalAdapter } = await getContext(s.auth);
+    const gone = s.world.agents.admin.user.id;
+    const kept = s.world.agents.member.user.id;
+    const { ticket } = await seedTicket(s, { assigneeId: kept });
+    const agentRow = (overrides: Partial<SupportMessageRow>) =>
+      insertMessage(s.auth, {
+        ticketId: ticket.id,
+        authorType: "agent",
+        userId: kept,
+        ...overrides,
+      });
+    const only = await agentRow({ kind: "note", mentions: [gone] });
+    const both = await agentRow({ kind: "reply", mentions: [gone, kept] });
+    const assignee = await agentRow({
+      kind: "event",
+      body: "",
+      data: { type: "assignee", from: gone, to: kept },
+    });
+    const status = await agentRow({
+      kind: "event",
+      body: "",
+      data: { type: "status", from: "open", to: "pending" },
+    });
+
+    await internalAdapter.deleteUser(gone);
+
+    const after = await snapshot(s);
+    const message = (id: string) => after.messages.find((m) => m.id === id);
+    expect(message(only.id)?.mentions ?? null).toBeNull();
+    expect(message(both.id)?.mentions).toEqual([kept]);
+    expect(message(assignee.id)?.data).toEqual({
+      type: "assignee",
+      from: null,
+      to: kept,
+    });
+    expect(message(status.id)?.data).toEqual({
+      type: "status",
+      from: "open",
+      to: "pending",
+    });
+    expect(JSON.stringify(after.messages)).not.toContain(gone);
+  });
+
   it.each([
     { cleanup: "organizationCleanup on", organizationCleanup: true },
     { cleanup: "organizationCleanup: false", organizationCleanup: false },

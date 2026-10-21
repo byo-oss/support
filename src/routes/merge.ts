@@ -114,6 +114,13 @@ async function moveTags(
   }
 }
 
+/** The later of two dates (as stored: a `Date`, or a string on some adapters). */
+function laterOf(a: Date | string, b: Date | string): Date {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getTime() >= y.getTime() ? x : y;
+}
+
 /**
  * `mergeSupportTickets`: POST `/support/agent/merge`, gated `support:update`,
  * body `{ sourceId, targetId }`, returns `{ ticket }` (the target
@@ -129,8 +136,8 @@ export function mergeEndpoints(opts: ResolvedSupportOptions) {
      * or target already merged, or a different requester or organization.
      * Messages, tags (deduped), attachments and deliveries move to the
      * target; the target takes the stricter `visibility` (`private` wins)
-     * and `verified` (`false` wins); the source is closed with
-     * `mergedIntoId`. Both get a `merged` event row, and
+     * and `verified` (`false` wins) and the later `lastMessageAt`; the
+     * source is closed with `mergedIntoId`. Both get a `merged` event row, and
      * `support.ticket.merged` is emitted.
      */
     mergeSupportTickets: createAuthEndpoint(
@@ -190,6 +197,8 @@ export function mergeEndpoints(opts: ResolvedSupportOptions) {
               ? ("private" as const)
               : target.visibility,
           verified: source.verified === true && target.verified === true,
+          // the moved messages count as the target's activity now
+          lastMessageAt: laterOf(source.lastMessageAt, target.lastMessageAt),
           updatedAt: new Date(),
         };
         const merged =

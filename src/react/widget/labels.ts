@@ -28,7 +28,10 @@ export type SupportWidgetLabels = {
   statusChanged: (from: string, to: string) => string;
   /** The row shown in a ticket that was merged into this one. */
   ticketMerged: string;
-  /** Label of the button that opens an attachment in a new tab. */
+  /**
+   * @deprecated Unused: the widget only downloads attachments (a file is
+   * never opened in a tab). Kept so existing overrides still type-check.
+   */
   openAttachment: (filename: string) => string;
   /** Label of the button that saves an attachment. */
   downloadAttachment: (filename: string) => string;

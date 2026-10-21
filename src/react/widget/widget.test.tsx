@@ -771,53 +771,126 @@ describe("SupportWidget attachments", () => {
     );
   });
 
-  it("opens an attachment through openAttachment and a blob URL", async () => {
-    const blob = new Blob(["pdf"], { type: "application/pdf" });
-    const { mocks } = renderWidget(withAttachment);
-    mocks.$fetch.mockImplementationOnce(() => ok(blob) as never);
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
-    await openThread();
-    fireEvent.click(screen.getByRole("button", { name: "Open report.pdf" }));
+  it("downloads an attachment with its file name and never opens it in a tab", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const blob = new Blob(["pdf"], { type: "application/pdf" });
+      const { mocks } = renderWidget(withAttachment);
+      mocks.$fetch.mockImplementationOnce(() => ok(blob) as never);
+      const open = vi.spyOn(window, "open").mockReturnValue(null);
+      const clicked: HTMLAnchorElement[] = [];
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+        function (this: HTMLAnchorElement) {
+          clicked.push(this);
+        },
+      );
+      await openThread();
+      // one action per file: save it
+      expect(screen.queryByRole("button", { name: /^Open / })).toBeNull();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Download report.pdf" }),
+      );
 
-    await waitFor(() => expect(open).toHaveBeenCalled());
-    expect(mocks.$fetch).toHaveBeenCalledWith("/support/attachment", {
-      method: "GET",
-      query: { id: "a1" },
-    });
-    expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
-    expect(open.mock.calls[0]?.[0]).toBe("blob:fake");
-    // the URL is still valid for the new tab: not revoked straight away
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-  });
-
-  it("downloads an attachment with its file name", async () => {
-    const blob = new Blob(["pdf"], { type: "application/pdf" });
-    const { mocks } = renderWidget(withAttachment);
-    mocks.$fetch.mockImplementationOnce(() => ok(blob) as never);
-    const clicked: HTMLAnchorElement[] = [];
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
-      clicked.push(this);
-    });
-    await openThread();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Download report.pdf" }),
-    );
-
-    await waitFor(() => expect(clicked).toHaveLength(1));
-    expect(clicked[0]?.download).toBe("report.pdf");
-    expect(clicked[0]?.getAttribute("href")).toBe("blob:fake");
+      await waitFor(() => expect(clicked).toHaveLength(1));
+      expect(mocks.$fetch).toHaveBeenCalledWith("/support/attachment", {
+        method: "GET",
+        query: { id: "a1" },
+      });
+      expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
+      expect(clicked[0]?.download).toBe("report.pdf");
+      expect(clicked[0]?.getAttribute("href")).toBe("blob:fake");
+      // the anchor is gone after the click, and the blob is never a page
+      expect(clicked[0]?.isConnected).toBe(false);
+      expect(open).not.toHaveBeenCalled();
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:fake");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows an error when an attachment cannot be opened", async () => {
     const { mocks } = renderWidget(withAttachment);
     mocks.$fetch.mockImplementationOnce(() => failure() as never);
     await openThread();
-    fireEvent.click(screen.getByRole("button", { name: "Open report.pdf" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download report.pdf" }),
+    );
     expect(
       await screen.findByText("The file could not be opened."),
     ).toBeTruthy();
+  });
+});
+
+describe("SupportWidget ticketId (email deep links)", () => {
+  it("starts open on that ticket's thread", async () => {
+    const { mocks } = renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { ticketId: "t2" },
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(mocks.ticket).toHaveBeenCalledWith({ query: { id: "t2" } });
+  });
+
+  it("goes back to the list from a linked ticket", async () => {
+    const { mocks } = renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { ticketId: "t2" },
+    );
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: /Subject t1/ }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Subject t2/ })).toBeNull();
+    expect(mocks.myTickets).toHaveBeenCalled();
+  });
+
+  it("opens a new ticket when the prop changes, even after closing", async () => {
+    const { client, mocks, rerender } = renderWidget(
+      { detail: { ticket: ticket("t1") } },
+      { ticketId: "t1" },
+    );
+    await screen.findByRole("heading", { name: /Subject t1/ });
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    mocks.ticket.mockImplementation(() =>
+      ok({ ticket: ticket("t2"), messages: [], attachments: [] }),
+    );
+    rerender(<SupportWidget client={client} pollInterval={0} ticketId="t2" />);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(mocks.ticket).toHaveBeenCalledWith({ query: { id: "t2" } });
+  });
+
+  it("shows the thread's error state for a ticket it can't read", async () => {
+    const { client, mocks } = makeClient();
+    mocks.ticket.mockImplementation(
+      () => failure({ status: 404, message: "Not found" }) as never,
+    );
+    render(
+      <SupportWidget client={client} pollInterval={0} ticketId="missing" />,
+    );
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Something went wrong. Try again.")).toBeTruthy();
+    expect(mocks.ticket).toHaveBeenCalledWith({ query: { id: "missing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("button", { name: /Subject t1/ }),
+    ).toBeTruthy();
+  });
+
+  it("starts closed on the list without ticketId", async () => {
+    const { mocks } = renderWidget();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalled());
+    expect(mocks.ticket).not.toHaveBeenCalled();
   });
 });
 
@@ -884,7 +957,6 @@ describe("SupportWidget popover and keyboard", () => {
     );
     expect(names).toEqual([
       "Back",
-      "Open report.pdf",
       "Download report.pdf",
       "Mark solved",
       "Good",
@@ -1083,7 +1155,9 @@ describe("SupportWidget labels", () => {
 
     // failure states
     mocks.$fetch.mockImplementationOnce(() => failure() as never);
-    fireEvent.click(screen.getByRole("button", { name: /«openAttachment/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /«downloadAttachment/ }),
+    );
     await screen.findByText("«attachmentFailed»");
     mocks.$fetch.mockImplementationOnce(() => failure() as never);
     fireEvent.change(input, {

@@ -28,6 +28,13 @@ export type SupportWidgetProps = {
   ) => ReactNode;
   /** Organization for new tickets and "share with my organization". */
   organizationId?: string;
+  /**
+   * Opens the panel on this ticket's thread, for links from emails (route
+   * `ticketPath(id)` to a page that renders `<SupportWidget ticketId={id} />`).
+   * A new value opens that ticket; Back still goes to the list. A ticket the
+   * caller can't read shows the thread's error state.
+   */
+  ticketId?: string;
   /** Poll interval in ms. @default 15000 */
   pollInterval?: number;
   /** Shared keys (`SupportLabels`) plus this component's own. */
@@ -55,13 +62,15 @@ const DEFAULT_BUTTON_CLASS = `relative inline-flex items-center gap-2 rounded-md
  * rate, share with the organization.
  *
  * A launcher button (with the unread count) opens the panel. Escape or a
- * click outside closes it, and Escape returns focus to the launcher.
+ * click outside closes it, and Escape returns focus to the launcher. With
+ * `ticketId` the panel starts open on that ticket's thread.
  */
 export function SupportWidget({
   client,
   onNavigate,
   renderMessage,
   organizationId,
+  ticketId,
   pollInterval,
   labels: labelOverrides,
   className,
@@ -80,12 +89,24 @@ export function SupportWidget({
   );
   const { refresh } = tickets;
 
-  const [open, setOpen] = useState(false);
-  const [view, setView] = useState<View>({ name: "list" });
+  const [open, setOpen] = useState(Boolean(ticketId));
+  const [view, setView] = useState<View>(
+    ticketId ? { name: "thread", ticketId } : { name: "list" },
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
   const countId = useId();
+
+  // a deep link (or a new one, on client-side navigation) opens its ticket
+  const linked = useRef(ticketId);
+  useEffect(() => {
+    if (linked.current === ticketId) return;
+    linked.current = ticketId;
+    if (!ticketId) return;
+    setView({ name: "thread", ticketId });
+    setOpen(true);
+  }, [ticketId]);
 
   useEffect(() => {
     if (!open) return;

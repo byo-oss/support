@@ -178,7 +178,6 @@ export async function createTicket(
         ticketId: ticket.id,
         number: ticket.number,
         channel: ticket.channel,
-        visibility: ticket.visibility,
       },
     }),
     rt.context.logger,

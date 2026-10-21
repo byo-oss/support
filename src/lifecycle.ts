@@ -14,7 +14,12 @@ import {
 } from "./adapter";
 import { runSweep } from "./delivery";
 import type { ResolvedSupportOptions } from "./options";
-import type { SupportAttachmentRow, SupportTicketRow } from "./schema";
+import type {
+  SupportAttachmentRow,
+  SupportEventData,
+  SupportMessageRow,
+  SupportTicketRow,
+} from "./schema";
 
 /** The organization plugin paths support cleans up after. */
 export const ORGANIZATION_CLEANUP_PATHS = [
@@ -330,10 +335,86 @@ export function organizationHooksAfter(opts: ResolvedSupportOptions) {
   ];
 }
 
+/** Agent messages read per page while scrubbing a deleted user's id out of json. */
+const SCRUB_PAGE = 500;
+
+type ScrubbedMessage = Pick<
+  SupportMessageRow,
+  "id" | "kind" | "mentions" | "data"
+>;
+
+/** A json column as stored: parsed already on most adapters, a string on some. */
+function parseJson<T>(value: unknown): T | null {
+  if (typeof value !== "string") return (value ?? null) as T | null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Removes a deleted user's id from what no foreign key reaches: the
+ * `mentions` array of agent replies and notes, and `from`/`to` of
+ * `assignee` event rows (set to null). Both are json, which adapters can't
+ * filter inside portably, so agent-authored messages (the only ones that
+ * carry either) are read a page at a time by offset over a stable sort, and
+ * only the rows that name the user are updated, one by one. Returns how many
+ * rows changed.
+ */
+async function scrubUserFromMessages(
+  adapter: SupportRuntime["adapter"],
+  userId: string,
+): Promise<number> {
+  let changed = 0;
+  // the filter (authorType) is never what the update changes, so the offset
+  // stays valid while rows are rewritten
+  for (let offset = 0; ; offset += SCRUB_PAGE) {
+    const page = await adapter.findMany<ScrubbedMessage>({
+      model: "supportMessage",
+      where: [{ field: "authorType", value: "agent" }],
+      limit: SCRUB_PAGE,
+      offset,
+      sortBy: { field: "id", direction: "asc" },
+      select: ["id", "kind", "mentions", "data"],
+    });
+    for (const row of page) {
+      const update: Record<string, unknown> = {};
+      const mentions = parseJson<unknown>(row.mentions);
+      if (Array.isArray(mentions) && mentions.includes(userId)) {
+        const left = mentions.filter((id) => id !== userId);
+        update.mentions = left.length > 0 ? left : null;
+      }
+      const data = parseJson<SupportEventData>(row.data);
+      if (
+        row.kind === "event" &&
+        data?.type === "assignee" &&
+        (data.from === userId || data.to === userId)
+      ) {
+        update.data = {
+          ...data,
+          from: data.from === userId ? null : (data.from ?? null),
+          to: data.to === userId ? null : (data.to ?? null),
+        };
+      }
+      if (Object.keys(update).length === 0) continue;
+      await adapter.update({
+        model: "supportMessage",
+        where: [{ field: "id", value: row.id }],
+        update,
+      });
+      changed++;
+    }
+    if (page.length < SCRUB_PAGE) return changed;
+  }
+}
+
 /**
  * `databaseHooks.user.delete.after`, built in `init` with its context: nulls
  * `userId` on tickets, messages, canned replies and attachments and
- * `assigneeId` on tickets, and clears `requesterEmail`/`requesterName`/
+ * `assigneeId` on tickets, removes their id from message `mentions` and
+ * from `assignee` event rows' `from`/`to` (no foreign key reaches json, so
+ * this runs on SQL too), and clears `requesterEmail`/`requesterName`/
  * `authorEmail`/`authorName` equal to the deleted user's email. Logs and
  * swallows errors.
  */
@@ -360,6 +441,7 @@ export function userDeleteHook(
       await clearUser("supportMessage");
       await clearUser("supportCannedReply");
       if (opts.attachments) await clearUser("supportAttachment");
+      await scrubUserFromMessages(adapter, user.id);
 
       // copies of their address from before the account was linked
       const email =

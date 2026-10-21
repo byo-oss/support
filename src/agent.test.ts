@@ -525,6 +525,7 @@ describe("replyAsSupportAgent (J7)", () => {
       ticketId: ticket.id,
       messageId: res.message.id,
       status: "pending",
+      visibility: "private",
     });
   });
 
@@ -745,6 +746,24 @@ describe("updateSupportTickets (J8)", () => {
     });
   });
 
+  it("counts every matched ticket in updated, unchanged ones included", async () => {
+    const s = await setup();
+    const already = await insertTicket(s.auth, {
+      userId: s.world.customer.user.id,
+      priority: "high",
+    });
+    const changes = await insertTicket(s.auth, {
+      userId: s.world.customer.user.id,
+    });
+    s.events.length = 0;
+    const res = await s.auth.api.updateSupportTickets({
+      body: { ids: [already.id, changes.id, "missing"], priority: "high" },
+      headers: s.world.agents.member.headers,
+    });
+    expect(res).toEqual({ updated: 2 });
+    expect((await reload(s.rt, changes.id)).priority).toBe("high");
+  });
+
   it("unassigns (assigneeId null) and clears priority, emitting assigned without a userId", async () => {
     const s = await setup();
     const ticket = await insertTicket(s.auth, {
@@ -767,6 +786,7 @@ describe("updateSupportTickets (J8)", () => {
       ticketId: ticket.id,
       from: s.world.agents.admin.user.id,
       to: null,
+      visibility: "private",
     });
   });
 

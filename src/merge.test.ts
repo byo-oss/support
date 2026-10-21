@@ -234,7 +234,12 @@ describe("mergeSupportTickets", () => {
       userId: s.world.customer.user.id,
       organizationId: s.world.customerOrg.id,
       subject: { type: "supportTicket", id: target.id },
-      data: { ticketId: target.id, sourceId: source.id, targetId: target.id },
+      data: {
+        ticketId: target.id,
+        sourceId: source.id,
+        targetId: target.id,
+        visibility: "private",
+      },
     });
     // the source's close goes through applyStatus like any status change
     expect(
@@ -242,7 +247,12 @@ describe("mergeSupportTickets", () => {
     ).toEqual([
       expect.objectContaining({
         subject: { type: "supportTicket", id: source.id },
-        data: { ticketId: source.id, from: "open", to: "closed" },
+        data: {
+          ticketId: source.id,
+          from: "open",
+          to: "closed",
+          visibility: "private",
+        },
       }),
     ]);
   });
@@ -364,6 +374,39 @@ describe("mergeSupportTickets", () => {
       expect(res.ticket.visibility).toBe(expected);
       expect((await row(s.rt, target.id)).visibility).toBe(expected);
     }
+  });
+
+  it("gives the target the later lastMessageAt of the two", async () => {
+    const s = await setup();
+    const earlier = new Date("2026-01-01T00:00:00.000Z");
+    const later = new Date("2026-02-01T00:00:00.000Z");
+    const setLast = (id: string, lastMessageAt: Date) =>
+      s.rt.adapter.update({
+        model: "supportTicket",
+        where: [{ field: "id", value: id }],
+        update: { lastMessageAt },
+      });
+
+    // the source is newer: the target moves up to it
+    const newer = await webTicket(s);
+    const older = await webTicket(s);
+    await setLast(newer.id, later);
+    await setLast(older.id, earlier);
+    const res = await merge(s, newer.id, older.id);
+    expect(new Date(res.ticket.lastMessageAt).getTime()).toBe(later.getTime());
+    expect(new Date((await row(s.rt, older.id)).lastMessageAt).getTime()).toBe(
+      later.getTime(),
+    );
+
+    // the source is older: the target keeps its own
+    const stale = await webTicket(s);
+    const fresh = await webTicket(s);
+    await setLast(stale.id, earlier);
+    await setLast(fresh.id, later);
+    await merge(s, stale.id, fresh.id);
+    expect(new Date((await row(s.rt, fresh.id)).lastMessageAt).getTime()).toBe(
+      later.getTime(),
+    );
   });
 
   it("gives the target the stricter verified (false wins)", async () => {

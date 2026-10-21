@@ -37,7 +37,7 @@ Work through these in order. Each step ends on a check; move on only when it hol
 
 ## Add-ons, only if asked for
 
-**Email replies.** Needs `@wraps.dev/email` for Wraps. Add `mailer: wrapsMailer({ from })` (from `@byo-oss/support/wraps`) and `email: { from, replyDomain, appUrl }` together, with `from` the same address; setting one without the other fails at boot. Route `ticketPath(id)` (default `/support/<id>`) to the widget so the link in mail lands. Rerun the migration (adds `supportDelivery`). Done when an agent reply produces a `sent` row in `supportDelivery` after the sweep runs.
+**Email replies.** Needs `@wraps.dev/email` for Wraps. Add `mailer: wrapsMailer({ from })` (from `@byo-oss/support/wraps`) and `email: { from, replyDomain, appUrl }` together, with `from` the same address; setting one without the other fails at boot. Route `ticketPath(id)` (default `/support/<id>`) to a page that renders `<SupportWidget ticketId={id} />`, so the link in mail opens that ticket. Rerun the migration (adds `supportDelivery`). Done when an agent reply produces a `sent` row in `supportDelivery` after the sweep runs.
 
 **Inbound email.** Needs `email`. Add `inbound: { source: rawRelay({ secret }) }` (Postmark, Mailgun, Cloudflare: POST the raw message with `Authorization: Bearer <secret>`) or `wrapsInbound({ key, bucket, region })` from `@byo-oss/support/wraps` (EventBridge `email.received`, header `X-Wraps-Inbound-Key`). Point the relay at `<auth base path>/support/inbound` and route every address at `replyDomain`, plus-addresses included, to it.
 - For `wrapsInbound` the role needs `s3:GetObject` on `bucket/*` **and** `s3:ListBucket` on the bucket. Without `ListBucket` a missing object is reported as `AccessDenied`, answered 502 and retried forever.
@@ -50,7 +50,7 @@ Done when a mail to `support@<replyDomain>` opens a ticket and a mail to a reply
 
 **Org cleanup.** Support cleans up after the organization plugin's `/organization/delete`, `/remove-member` and `/leave` by itself (`organizationCleanup`, default `true`). For deletes made another way, call `deleteOrganizationData(auth, organizationId)` and `deleteMemberData(auth, { userId, organizationId })` from `@byo-oss/support`, or `@byo-oss/core`'s fan-out in `organizationHooks`. Done when deleting a test organization leaves no tickets for it.
 
-**Notifications.** Pass `onEvent` built with `createEventBus` from `@byo-oss/core` and route to `auth.api.notify` (`@byo-oss/notifications`): `support.ticket.created`, `support.customer.replied` to the staff organization (`organizationId: staffOrganizationId`, `excludeUserIds` the actor); `support.ticket.assigned` and `support.agent.mentioned` to `event.userId`; `support.agent.replied` to the requester's `event.userId`. Never forward `support.note.added` to a customer. Done when an agent reply shows up in the customer's inbox.
+**Notifications.** Pass `onEvent` built with `createEventBus` from `@byo-oss/core` and route to `auth.api.notify` (`@byo-oss/notifications`): `support.ticket.created`, `support.customer.replied` to the staff organization (`organizationId: staffOrganizationId`, `excludeUserIds` the actor); `support.ticket.assigned` and `support.agent.mentioned` to `event.userId`; `support.agent.replied` to the requester's `event.userId`. Never forward `support.note.added` to a customer, and skip events whose `data.visibility` is `"private"` when fanning out to a customer organization. Done when an agent reply shows up in the customer's inbox.
 
 ## Rules
 
