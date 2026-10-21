@@ -1,4 +1,3 @@
-// BYO_STUB: final owner N12a. The seeded keys are final; N12a may add keys (never rename or remove).
 // Shared by both components. Keys only the widget or only the inbox uses go in
 // widget/labels.ts (N12b) or inbox/labels.ts (N12c).
 
@@ -68,5 +67,16 @@ export const defaultLabels: SupportLabels = {
  */
 export function formatRelativeTime(value: Date | string): string {
   const date = typeof value === "string" ? new Date(value) : value;
-  return date.toLocaleString();
+  const time = date.getTime();
+  if (Number.isNaN(time)) return "";
+  const seconds = Math.floor((Date.now() - time) / 1000);
+  // under a minute, and clock skew (a time slightly in the future)
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString();
 }

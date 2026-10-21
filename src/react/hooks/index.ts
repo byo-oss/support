@@ -1,4 +1,4 @@
-// BYO_STUB: final owner N12a. Signatures and types are final (contracts.md); bodies return empty state.
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentAttachmentResponse,
   AgentMessageResponse,
@@ -25,6 +25,14 @@ import type {
   TicketStatus,
   TicketVisibility,
 } from "../../schema";
+import {
+  attempt,
+  compact,
+  DEFAULT_POLL_INTERVAL,
+  unwrap,
+  useSupportPagedResource,
+  useSupportResource,
+} from "./resource";
 
 type Result<T> = Promise<{ data: Wire<T> | null; error: unknown }>;
 
@@ -191,18 +199,68 @@ export type UseSupportTicketsResult = AsyncState & {
 
 /** The customer's ticket list (own + org-shared). */
 export function useSupportTickets(
-  _client: SupportFetchClient,
-  _options: UseSupportTicketsOptions = {},
+  client: SupportFetchClient,
+  options: UseSupportTicketsOptions = {},
 ): UseSupportTicketsResult {
+  const {
+    status,
+    organizationId,
+    q,
+    pollInterval = DEFAULT_POLL_INTERVAL,
+  } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  const query = { status, organizationId, q };
+  const list = useSupportPagedResource<
+    WireCustomerTicket,
+    { attachments: boolean }
+  >({
+    scope: `${status ?? ""}|${organizationId ?? ""}|${q ?? ""}`,
+    pollInterval,
+    fetchFirst: async () => {
+      const res = await unwrap(
+        clientRef.current.support.myTickets({ query: compact(query) }),
+      );
+      return {
+        rows: res.tickets,
+        nextCursor: res.nextCursor,
+        extra: res.features,
+      };
+    },
+    fetchMore: async (cursor) => {
+      const res = await unwrap(
+        clientRef.current.support.myTickets({
+          query: { ...compact(query), cursor },
+        }),
+      );
+      return { rows: res.tickets, nextCursor: res.nextCursor };
+    },
+  });
+  const { refresh, fail } = list;
+
+  const createTicket = useCallback(
+    async (input: Parameters<UseSupportTicketsResult["createTicket"]>[0]) => {
+      const done = await attempt(
+        () => unwrap(clientRef.current.support.createTicket(input)),
+        fail,
+      );
+      if (!done.ok) return null;
+      await refresh();
+      return done.value.ticket;
+    },
+    [refresh, fail],
+  );
+
   return {
-    tickets: [],
-    features: { attachments: false },
-    hasMore: false,
-    isLoading: false,
-    error: null,
-    refresh: async () => {},
-    loadMore: async () => {},
-    createTicket: async () => null,
+    tickets: list.rows,
+    features: list.extra ?? { attachments: false },
+    hasMore: list.hasMore,
+    isLoading: list.isLoading,
+    error: list.error,
+    refresh,
+    loadMore: list.loadMore,
+    createTicket,
   };
 }
 
@@ -237,21 +295,88 @@ export type UseSupportTicketResult = AsyncState & {
  * `ticket.id`.
  */
 export function useSupportTicket(
-  _client: SupportFetchClient,
-  _ticketId: string | null,
-  _options: Polling = {},
+  client: SupportFetchClient,
+  ticketId: string | null,
+  options: Polling = {},
 ): UseSupportTicketResult {
+  const { pollInterval = DEFAULT_POLL_INTERVAL } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  const detail = useSupportResource({
+    scope: ticketId ?? "",
+    enabled: ticketId !== null,
+    pollInterval,
+    load: () =>
+      unwrap(
+        clientRef.current.support.ticket({
+          query: { id: ticketId as string },
+        }),
+      ),
+  });
+  const { data, refresh, fail } = detail;
+
+  // after a merge the server answers with the target; act on that one
+  const actingId = data?.ticket.id ?? ticketId;
+
+  const reply = useCallback(
+    async (input: { body: string; attachmentIds?: string[] }) => {
+      if (actingId === null) return false;
+      const done = await attempt(
+        () =>
+          unwrap(
+            clientRef.current.support.reply({ ticketId: actingId, ...input }),
+          ),
+        fail,
+      );
+      if (done.ok) await refresh();
+      return done.ok;
+    },
+    [actingId, refresh, fail],
+  );
+
+  const update = useCallback(
+    async (input: Parameters<UseSupportTicketResult["update"]>[0]) => {
+      if (actingId === null) return false;
+      const done = await attempt(
+        () =>
+          unwrap(
+            clientRef.current.support.updateMine({ id: actingId, ...input }),
+          ),
+        fail,
+      );
+      if (done.ok) await refresh();
+      return done.ok;
+    },
+    [actingId, refresh, fail],
+  );
+
+  const markSeen = useCallback(async () => {
+    if (actingId === null) return;
+    const done = await attempt(
+      () => unwrap(clientRef.current.support.markSeen({ id: actingId })),
+      fail,
+    );
+    if (done.ok) await refresh();
+  }, [actingId, refresh, fail]);
+
+  const openAttachment = useCallback(
+    (id: string) =>
+      downloadAttachment(clientRef.current, "/support/attachment", id, fail),
+    [fail],
+  );
+
   return {
-    ticket: null,
-    messages: [],
-    attachments: [],
-    isLoading: false,
-    error: null,
-    refresh: async () => {},
-    reply: async () => false,
-    update: async () => false,
-    markSeen: async () => {},
-    openAttachment: async () => null,
+    ticket: data?.ticket ?? null,
+    messages: data?.messages ?? [],
+    attachments: data?.attachments ?? [],
+    isLoading: detail.isLoading,
+    error: detail.error,
+    refresh,
+    reply,
+    update,
+    markSeen,
+    openAttachment,
   };
 }
 
@@ -285,22 +410,112 @@ export type UseSupportQueueResult = AsyncState & {
 
 /** The agent queue with filters, counts, tags and bulk actions. */
 export function useSupportQueue(
-  _client: SupportFetchClient,
-  _options: UseSupportQueueOptions = {},
+  client: SupportFetchClient,
+  options: UseSupportQueueOptions = {},
 ): UseSupportQueueResult {
+  const {
+    status,
+    assignee,
+    tag,
+    organizationId,
+    q,
+    pollInterval = DEFAULT_POLL_INTERVAL,
+  } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  const query = { status, assignee, tag, organizationId, q };
+  const list = useSupportPagedResource<
+    WireAgentTicket,
+    {
+      counts: AgentCounts;
+      features: { attachments: boolean; merge: boolean };
+      tags: string[];
+    }
+  >({
+    scope: [status, assignee, tag, organizationId, q]
+      .map((part) => part ?? "")
+      .join("|"),
+    pollInterval,
+    fetchFirst: async () => {
+      const agent = clientRef.current.support.agent;
+      const [res, tags] = await Promise.all([
+        unwrap(agent.tickets({ query: compact(query) })),
+        unwrap(agent.tags()),
+      ]);
+      return {
+        rows: res.tickets,
+        nextCursor: res.nextCursor,
+        extra: { counts: res.counts, features: res.features, tags },
+      };
+    },
+    fetchMore: async (cursor) => {
+      const res = await unwrap(
+        clientRef.current.support.agent.tickets({
+          query: { ...compact(query), cursor },
+        }),
+      );
+      return { rows: res.tickets, nextCursor: res.nextCursor };
+    },
+  });
+  const { refresh, fail } = list;
+
+  const update = useCallback(
+    async (ids: string[], input: TicketUpdateInput) => {
+      const done = await attempt(
+        () => unwrap(clientRef.current.support.agent.update({ ...input, ids })),
+        fail,
+      );
+      if (!done.ok) return null;
+      await refresh();
+      return done.value.updated;
+    },
+    [refresh, fail],
+  );
+
+  const remove = useCallback(
+    async (ids: string[]) => {
+      const done = await attempt(
+        () => unwrap(clientRef.current.support.agent.delete({ ids })),
+        fail,
+      );
+      if (!done.ok) return null;
+      await refresh();
+      return done.value.deleted;
+    },
+    [refresh, fail],
+  );
+
+  const mergeSupported = typeof client.support.agent.merge === "function";
+  const merge = useCallback(
+    async (sourceId: string, targetId: string) => {
+      const mergeCall = clientRef.current.support.agent.merge;
+      if (!mergeCall) return null;
+      const done = await attempt(
+        () => unwrap(mergeCall({ sourceId, targetId })),
+        fail,
+      );
+      if (!done.ok) return null;
+      await refresh();
+      return done.value.ticket;
+    },
+    [refresh, fail],
+  );
+
+  const extra = list.extra;
   return {
-    tickets: [],
-    counts: { open: 0, pending: 0, unassigned: 0, mine: 0 },
-    features: { attachments: false, merge: false },
-    tags: [],
-    hasMore: false,
-    isLoading: false,
-    error: null,
-    refresh: async () => {},
-    loadMore: async () => {},
-    update: async () => null,
-    merge: async () => null,
-    remove: async () => null,
+    tickets: list.rows,
+    counts: extra?.counts ?? { open: 0, pending: 0, unassigned: 0, mine: 0 },
+    features: extra?.features ?? { attachments: false, merge: false },
+    tags: extra?.tags ?? [],
+    hasMore: list.hasMore,
+    isLoading: list.isLoading,
+    error: list.error,
+    refresh,
+    loadMore: list.loadMore,
+    update,
+    merge: mergeSupported ? merge : undefined,
+    remove,
   };
 }
 
@@ -330,21 +545,99 @@ export type UseSupportAgentTicketResult = AsyncState & {
  * `ticket.id`.
  */
 export function useSupportAgentTicket(
-  _client: SupportFetchClient,
-  _ticketId: string | null,
-  _options: Polling = {},
+  client: SupportFetchClient,
+  ticketId: string | null,
+  options: Polling = {},
 ): UseSupportAgentTicketResult {
+  const { pollInterval = DEFAULT_POLL_INTERVAL } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  const detail = useSupportResource({
+    scope: ticketId ?? "",
+    enabled: ticketId !== null,
+    pollInterval,
+    load: () =>
+      unwrap(
+        clientRef.current.support.agent.ticket({
+          query: { id: ticketId as string },
+        }),
+      ),
+  });
+  const { data, refresh, fail } = detail;
+
+  // after a merge the server answers with the target; act on that one
+  const actingId = data?.ticket.id ?? ticketId;
+
+  const reply = useCallback(
+    async (input: Parameters<UseSupportAgentTicketResult["reply"]>[0]) => {
+      if (actingId === null) return false;
+      const done = await attempt(
+        () =>
+          unwrap(
+            clientRef.current.support.agent.reply({
+              ticketId: actingId,
+              ...input,
+            }),
+          ),
+        fail,
+      );
+      if (done.ok) await refresh();
+      return done.ok;
+    },
+    [actingId, refresh, fail],
+  );
+
+  const update = useCallback(
+    async (input: TicketUpdateInput) => {
+      if (actingId === null) return false;
+      const done = await attempt(
+        () =>
+          unwrap(
+            clientRef.current.support.agent.update({
+              ...input,
+              ids: [actingId],
+            }),
+          ),
+        fail,
+      );
+      if (done.ok) await refresh();
+      return done.ok;
+    },
+    [actingId, refresh, fail],
+  );
+
+  const markSeen = useCallback(async () => {
+    if (actingId === null) return;
+    const done = await attempt(
+      () => unwrap(clientRef.current.support.agent.markSeen({ id: actingId })),
+      fail,
+    );
+    if (done.ok) await refresh();
+  }, [actingId, refresh, fail]);
+
+  const openAttachment = useCallback(
+    (id: string) =>
+      downloadAttachment(
+        clientRef.current,
+        "/support/agent/attachment",
+        id,
+        fail,
+      ),
+    [fail],
+  );
+
   return {
-    ticket: null,
-    messages: [],
-    attachments: [],
-    isLoading: false,
-    error: null,
-    refresh: async () => {},
-    reply: async () => false,
-    update: async () => false,
-    markSeen: async () => {},
-    openAttachment: async () => null,
+    ticket: data?.ticket ?? null,
+    messages: data?.messages ?? [],
+    attachments: data?.attachments ?? [],
+    isLoading: detail.isLoading,
+    error: detail.error,
+    refresh,
+    reply,
+    update,
+    markSeen,
+    openAttachment,
   };
 }
 
@@ -360,16 +653,55 @@ export type UseSupportCannedRepliesResult = AsyncState & {
 
 /** Canned replies (agents), optionally filtered by `q`. */
 export function useSupportCannedReplies(
-  _client: SupportFetchClient,
-  _options: { q?: string } = {},
+  client: SupportFetchClient,
+  options: { q?: string } = {},
 ): UseSupportCannedRepliesResult {
+  const { q } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  // canned replies change when an agent edits them, not on their own, so
+  // there is no interval; `refresh` and every mutation reload them
+  const list = useSupportResource({
+    scope: q ?? "",
+    pollInterval: 0,
+    load: () =>
+      unwrap(clientRef.current.support.agent.canned({ query: compact({ q }) })),
+  });
+  const { refresh, fail } = list;
+
+  const save = useCallback(
+    async (input: { id?: string; title: string; body: string }) => {
+      const done = await attempt(
+        () => unwrap(clientRef.current.support.agent.canned.save(input)),
+        fail,
+      );
+      if (!done.ok) return null;
+      await refresh();
+      return done.value.cannedReply;
+    },
+    [refresh, fail],
+  );
+
+  const remove = useCallback(
+    async (id: string) => {
+      const done = await attempt(
+        () => unwrap(clientRef.current.support.agent.canned.delete({ id })),
+        fail,
+      );
+      if (done.ok) await refresh();
+      return done.ok;
+    },
+    [refresh, fail],
+  );
+
   return {
-    cannedReplies: [],
-    isLoading: false,
-    error: null,
-    refresh: async () => {},
-    save: async () => null,
-    remove: async () => false,
+    cannedReplies: list.data ?? [],
+    isLoading: list.isLoading,
+    error: list.error,
+    refresh,
+    save,
+    remove,
   };
 }
 
@@ -404,15 +736,110 @@ export type UseSupportUploadResult = {
 
 /** Attachment uploads for one ticket. */
 export function useSupportUpload(
-  _client: SupportFetchClient,
-  _options: UseSupportUploadOptions,
+  client: SupportFetchClient,
+  options: UseSupportUploadOptions,
 ): UseSupportUploadResult {
+  const { ticketId, agent = false, internal = false } = options;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+
+  const [uploads, setUploads] = useState<WireUploadedAttachment[]>([]);
+  const [pending, setPending] = useState(0);
+  const [error, setError] = useState<unknown>(null);
+  // `reset()` (and a ticket change) invalidates uploads still in flight
+  const generationRef = useRef(0);
+
+  useEffect(() => {
+    // uploads belong to one ticket and endpoint
+    void ticketId;
+    void agent;
+    generationRef.current++;
+    setUploads([]);
+    setError(null);
+  }, [ticketId, agent]);
+
+  const upload = useCallback(
+    async (file: Blob, filename?: string) => {
+      const generation = generationRef.current;
+      const name =
+        filename ?? (file instanceof File ? file.name : undefined) ?? "file";
+      setPending((count) => count + 1);
+      try {
+        const res = await clientRef.current.$fetch(
+          agent ? "/support/agent/upload" : "/support/upload",
+          {
+            method: "POST",
+            query: {
+              ticketId,
+              filename: name,
+              ...(agent ? { internal: String(internal) } : {}),
+            },
+            body: file,
+            headers: {
+              "content-type": file.type || "application/octet-stream",
+            },
+          },
+        );
+        if (res.error) throw res.error;
+        const attachment = (res.data as { attachment?: WireUploadedAttachment })
+          ?.attachment;
+        if (!attachment) {
+          throw new Error("Empty response from the support endpoint");
+        }
+        if (generation === generationRef.current) {
+          setUploads((prev) => [...prev, attachment]);
+          setError(null);
+        }
+        return attachment;
+      } catch (reason) {
+        if (generation === generationRef.current) setError(() => reason);
+        return null;
+      } finally {
+        setPending((count) => count - 1);
+      }
+    },
+    [ticketId, agent, internal],
+  );
+
+  const remove = useCallback((id: string) => {
+    setUploads((prev) => prev.filter((attachment) => attachment.id !== id));
+  }, []);
+
+  const reset = useCallback(() => {
+    generationRef.current++;
+    setUploads([]);
+    setError(null);
+  }, []);
+
   return {
-    upload: async () => null,
-    uploads: [],
-    isUploading: false,
-    error: null,
-    remove: () => {},
-    reset: () => {},
+    upload,
+    uploads,
+    isUploading: pending > 0,
+    error,
+    remove,
+    reset,
   };
+}
+
+/**
+ * GET `path?id=` through the auth client. A `Blob` comes back as is, any
+ * other body is wrapped; null (and `fail`) on error.
+ */
+async function downloadAttachment(
+  client: SupportFetchClient,
+  path: string,
+  id: string,
+  fail: (reason: unknown) => void,
+): Promise<Blob | null> {
+  const done = await attempt(async () => {
+    const res = await client.$fetch(path, { method: "GET", query: { id } });
+    if (res.error) throw res.error;
+    if (res.data === null || res.data === undefined) {
+      throw new Error("Empty response from the support endpoint");
+    }
+    return res.data instanceof Blob
+      ? res.data
+      : new Blob([res.data as BlobPart]);
+  }, fail);
+  return done.ok ? done.value : null;
 }
