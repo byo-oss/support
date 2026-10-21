@@ -285,7 +285,7 @@ export const SUPPORT_LIMITS = {
   attachmentIds: 10,
   mentions: 20,
   q: 200,
-  cursor: 4000,
+  cursor: 10_000,
   /** Ids carried in a list cursor. */
   cursorIds: 200,
   tagLength: 50,
