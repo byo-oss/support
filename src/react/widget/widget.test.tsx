@@ -1,0 +1,1126 @@
+// @vitest-environment happy-dom
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SupportFetchClient } from "../hooks";
+import { defaultLabels } from "../labels";
+import { SupportWidget, type SupportWidgetProps } from ".";
+import { defaultWidgetLabels } from "./labels";
+
+const ok = <T,>(data: T) => Promise.resolve({ data, error: null });
+const failure = (error: unknown = new Error("boom")) =>
+  Promise.resolve({ data: null, error });
+
+const NOW = new Date().toISOString();
+
+function ticket(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    number: id === "t2" ? 2 : 1,
+    subject: `Subject ${id}`,
+    status: "open",
+    priority: null,
+    channel: "web",
+    organizationId: null,
+    visibility: "private",
+    rating: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    lastMessageAt: NOW,
+    solvedAt: null,
+    unread: false,
+    ...extra,
+  };
+}
+
+function message(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    ticketId: "t1",
+    kind: "reply",
+    authorType: "agent",
+    author: { name: "Ada", image: null },
+    body: `Body ${id}`,
+    data: null,
+    createdAt: NOW,
+    ...extra,
+  };
+}
+
+function attachment(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    id,
+    ticketId: "t1",
+    messageId: "m1",
+    filename: "report.pdf",
+    contentType: "application/pdf",
+    size: 2048,
+    createdAt: NOW,
+    ...extra,
+  };
+}
+
+type Setup = {
+  tickets?: unknown[];
+  detail?: { ticket?: unknown; messages?: unknown[]; attachments?: unknown[] };
+  attachments?: boolean;
+  nextCursor?: string | null;
+};
+
+function makeClient(setup: Setup = {}) {
+  const mocks = {
+    createTicket: vi.fn((_input: unknown) => ok({ ticket: ticket("new") })),
+    myTickets: vi.fn((_input?: unknown) =>
+      ok({
+        tickets: setup.tickets ?? [ticket("t1"), ticket("t2")],
+        nextCursor: setup.nextCursor ?? null,
+        features: { attachments: setup.attachments ?? true },
+      }),
+    ),
+    ticket: vi.fn((_input: unknown) =>
+      ok({
+        ticket: setup.detail?.ticket ?? ticket("t1"),
+        messages: setup.detail?.messages ?? [message("m1")],
+        attachments: setup.detail?.attachments ?? [],
+      }),
+    ),
+    reply: vi.fn((_input: unknown) => ok({ message: message("m2") })),
+    updateMine: vi.fn((_input: unknown) => ok({ ticket: ticket("t1") })),
+    markSeen: vi.fn((_input: unknown) => ok({ ok: true })),
+    $fetch: vi.fn(
+      (
+        _path: string,
+        _options: unknown,
+      ): Promise<{ data: unknown; error: unknown }> =>
+        ok({
+          attachment: attachment("up1", {
+            filename: "photo.png",
+            messageId: null,
+          }),
+        }),
+    ),
+  };
+  const client = {
+    support: {
+      createTicket: mocks.createTicket,
+      myTickets: mocks.myTickets,
+      ticket: mocks.ticket,
+      reply: mocks.reply,
+      updateMine: mocks.updateMine,
+      markSeen: mocks.markSeen,
+      agent: {},
+    },
+    $fetch: mocks.$fetch,
+  } as unknown as SupportFetchClient;
+  return { client, mocks };
+}
+
+function renderWidget(
+  setup: Setup = {},
+  props: Partial<SupportWidgetProps> = {},
+) {
+  const { client, mocks } = makeClient(setup);
+  const view = render(
+    <SupportWidget client={client} pollInterval={0} {...props} />,
+  );
+  return { ...view, client, mocks };
+}
+
+const trigger = () => screen.getByRole("button", { name: "Support" });
+
+async function openPanel() {
+  fireEvent.click(trigger());
+  await screen.findByRole("dialog");
+}
+
+async function openThread(subject = "Subject t1") {
+  await openPanel();
+  fireEvent.click(
+    await screen.findByRole("button", { name: new RegExp(subject) }),
+  );
+  await screen.findByRole("heading", { name: new RegExp(subject) });
+}
+
+const originalCreate = URL.createObjectURL;
+const originalRevoke = URL.revokeObjectURL;
+
+beforeEach(() => {
+  URL.createObjectURL = vi.fn(() => "blob:fake");
+  URL.revokeObjectURL = vi.fn();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  URL.createObjectURL = originalCreate;
+  URL.revokeObjectURL = originalRevoke;
+});
+
+describe("SupportWidget list", () => {
+  it("lists my tickets with status, unread and relative time from labels", async () => {
+    renderWidget(
+      {
+        tickets: [
+          ticket("t1", { unread: true, status: "pending" }),
+          ticket("t2", { status: "solved" }),
+        ],
+      },
+      { labels: { relativeTime: () => "moments ago" } },
+    );
+    await openPanel();
+
+    expect(screen.getByRole("heading", { name: "My tickets" })).toBeTruthy();
+    const rows = await screen.findAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0] as HTMLElement).getByText("Pending")).toBeTruthy();
+    expect(within(rows[0] as HTMLElement).getByText("Unread")).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).getByText("Solved")).toBeTruthy();
+    expect(screen.getAllByText("moments ago")).toHaveLength(2);
+    expect(screen.getByText("#1")).toBeTruthy();
+  });
+
+  it("shows loading, empty and error states", async () => {
+    const { client, mocks } = makeClient({ tickets: [] });
+    const releases: Array<(value: unknown) => void> = [];
+    mocks.myTickets.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(resolve);
+        }) as never,
+    );
+    render(<SupportWidget client={client} pollInterval={0} />);
+    await openPanel();
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    for (const release of releases) {
+      release({
+        data: {
+          tickets: [],
+          nextCursor: null,
+          features: { attachments: true },
+        },
+        error: null,
+      });
+    }
+    expect(await screen.findByText("No tickets yet")).toBeTruthy();
+
+    mocks.myTickets.mockImplementation(() => failure() as never);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await openPanel();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Something went wrong. Try again.")).toBeTruthy();
+  });
+
+  it("loads more tickets", async () => {
+    const { mocks } = renderWidget({ nextCursor: "c1" });
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await waitFor(() =>
+      expect(mocks.myTickets).toHaveBeenCalledWith({
+        query: { cursor: "c1" },
+      }),
+    );
+  });
+
+  it("does not filter the list by organizationId", async () => {
+    const { mocks } = renderWidget({}, { organizationId: "org1" });
+    await openPanel();
+    await screen.findByText(/Subject t1/);
+    for (const call of mocks.myTickets.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain("org1");
+    }
+  });
+});
+
+describe("SupportWidget new ticket", () => {
+  async function openForm() {
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    await screen.findByLabelText("Subject");
+  }
+
+  it("creates a ticket and opens its thread", async () => {
+    const { mocks } = renderWidget();
+    await openForm();
+    const submit = screen.getByRole("button", { name: "Submit ticket" });
+    expect((submit as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "  Printer  " },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "It is on fire" },
+    });
+    fireEvent.click(submit);
+
+    await waitFor(() =>
+      expect(mocks.createTicket).toHaveBeenCalledWith({
+        subject: "Printer",
+        body: "It is on fire",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.ticket).toHaveBeenCalledWith({ query: { id: "new" } }),
+    );
+  });
+
+  it("submits with Enter in the subject and Ctrl+Enter in the message", async () => {
+    const { mocks } = renderWidget();
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Body" },
+    });
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "Subject" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Subject"), { key: "Enter" });
+    await waitFor(() => expect(mocks.createTicket).toHaveBeenCalledTimes(1));
+
+    cleanup();
+    const second = renderWidget();
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "Subject" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "Body" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Message"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+    await waitFor(() =>
+      expect(second.mocks.createTicket).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("offers the share toggle only with an organization", async () => {
+    renderWidget();
+    await openForm();
+    expect(screen.queryByLabelText("Share with my organization")).toBeNull();
+    cleanup();
+
+    const { mocks } = renderWidget({}, { organizationId: "org1" });
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "S" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "B" },
+    });
+    fireEvent.click(screen.getByLabelText("Share with my organization"));
+    fireEvent.click(screen.getByRole("button", { name: "Submit ticket" }));
+    await waitFor(() =>
+      expect(mocks.createTicket).toHaveBeenCalledWith({
+        subject: "S",
+        body: "B",
+        organizationId: "org1",
+        visibility: "organization",
+      }),
+    );
+  });
+
+  it("keeps the form and shows an error when creating fails", async () => {
+    const { mocks } = renderWidget();
+    mocks.createTicket.mockImplementationOnce(() => failure() as never);
+    await openForm();
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "S" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "B" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit ticket" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect((screen.getByLabelText("Subject") as HTMLInputElement).value).toBe(
+      "S",
+    );
+  });
+});
+
+describe("SupportWidget thread", () => {
+  it("renders customer-visible messages and event rows", async () => {
+    renderWidget({
+      detail: {
+        messages: [
+          message("m1"),
+          message("m2", {
+            kind: "event",
+            authorType: "system",
+            author: null,
+            body: "",
+            data: { type: "status", from: "open", to: "solved" },
+          }),
+          message("m3", { kind: "event", data: { type: "merged" } }),
+          message("m4", { authorType: "customer", author: null }),
+        ],
+      },
+    });
+    await openThread();
+    expect(screen.getByText("Body m1")).toBeTruthy();
+    expect(screen.getByText("Ada")).toBeTruthy();
+    expect(screen.getByText(/Status changed from Open to Solved/)).toBeTruthy();
+    expect(screen.getByText(/duplicate ticket was merged/)).toBeTruthy();
+    expect(screen.getByText("Someone")).toBeTruthy();
+  });
+
+  it("replies with the box and clears it", async () => {
+    const { mocks } = renderWidget();
+    await openThread();
+    const box = screen.getByLabelText("Reply") as HTMLTextAreaElement;
+    const send = screen.getByRole("button", {
+      name: "Send",
+    }) as HTMLButtonElement;
+    expect(send.disabled).toBe(true);
+    fireEvent.change(box, { target: { value: "Thanks" } });
+    fireEvent.click(send);
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "Thanks",
+      }),
+    );
+    await waitFor(() => expect(box.value).toBe(""));
+  });
+
+  it("replies with Ctrl+Enter in the box", async () => {
+    const { mocks } = renderWidget();
+    await openThread();
+    const box = screen.getByLabelText("Reply");
+    fireEvent.change(box, { target: { value: "Quick" } });
+    fireEvent.keyDown(box, { key: "Enter", metaKey: true });
+    await waitFor(() => expect(mocks.reply).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the text when a reply fails", async () => {
+    const { mocks } = renderWidget();
+    mocks.reply.mockImplementationOnce(() => failure() as never);
+    await openThread();
+    const box = screen.getByLabelText("Reply") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "Keep me" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(box.value).toBe("Keep me");
+  });
+
+  it("solves an open ticket, and reopens a solved one", async () => {
+    const open = renderWidget();
+    await openThread();
+    expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Mark solved" }));
+    await waitFor(() =>
+      expect(open.mocks.updateMine).toHaveBeenCalledWith({
+        id: "t1",
+        status: "solved",
+      }),
+    );
+    cleanup();
+
+    const solved = renderWidget({
+      detail: { ticket: ticket("t1", { status: "solved" }) },
+    });
+    await openThread();
+    expect(screen.queryByRole("button", { name: "Mark solved" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await waitFor(() =>
+      expect(solved.mocks.updateMine).toHaveBeenCalledWith({
+        id: "t1",
+        status: "open",
+      }),
+    );
+  });
+
+  it("takes no replies on a closed ticket", async () => {
+    renderWidget({ detail: { ticket: ticket("t1", { status: "closed" }) } });
+    await openThread();
+    expect(screen.getByText("This ticket is closed.")).toBeTruthy();
+    expect(screen.queryByLabelText("Reply")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark solved" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+  });
+
+  it("rates good or bad, and shows the current rating", async () => {
+    const { mocks } = renderWidget({
+      detail: { ticket: ticket("t1", { rating: "bad" }) },
+    });
+    await openThread();
+    const good = screen.getByRole("button", { name: "Good" });
+    const bad = screen.getByRole("button", { name: "Bad" });
+    expect(bad.getAttribute("aria-pressed")).toBe("true");
+    expect(good.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(bad);
+    expect(mocks.updateMine).not.toHaveBeenCalled();
+    fireEvent.click(good);
+    await waitFor(() =>
+      expect(mocks.updateMine).toHaveBeenCalledWith({
+        id: "t1",
+        rating: "good",
+      }),
+    );
+  });
+
+  it("shares with the organization, and unshares", async () => {
+    const priv = renderWidget({
+      detail: { ticket: ticket("t1", { organizationId: "org1" }) },
+    });
+    await openThread();
+    const box = screen.getByLabelText(
+      "Share with my organization",
+    ) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    await waitFor(() =>
+      expect(priv.mocks.updateMine).toHaveBeenCalledWith({
+        id: "t1",
+        visibility: "organization",
+      }),
+    );
+    cleanup();
+
+    const shared = renderWidget({
+      detail: {
+        ticket: ticket("t1", {
+          organizationId: "org1",
+          visibility: "organization",
+        }),
+      },
+    });
+    await openThread();
+    const checked = screen.getByLabelText(
+      "Share with my organization",
+    ) as HTMLInputElement;
+    expect(checked.checked).toBe(true);
+    fireEvent.click(checked);
+    await waitFor(() =>
+      expect(shared.mocks.updateMine).toHaveBeenCalledWith({
+        id: "t1",
+        visibility: "private",
+      }),
+    );
+  });
+
+  it("hides the share toggle on a ticket with no organization", async () => {
+    renderWidget();
+    await openThread();
+    expect(screen.queryByLabelText("Share with my organization")).toBeNull();
+  });
+
+  it("marks an unread ticket seen once", async () => {
+    const { mocks } = renderWidget({
+      detail: { ticket: ticket("t1", { unread: true }) },
+    });
+    await openThread();
+    await waitFor(() =>
+      expect(mocks.markSeen).toHaveBeenCalledWith({ id: "t1" }),
+    );
+    expect(mocks.markSeen).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark a read ticket seen", async () => {
+    const { mocks } = renderWidget();
+    await openThread();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.markSeen).not.toHaveBeenCalled();
+  });
+
+  it("goes back to the list", async () => {
+    renderWidget();
+    await openThread();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("heading", { name: "My tickets" }),
+    ).toBeTruthy();
+  });
+
+  it("lets renderMessage wrap or replace a message", async () => {
+    renderWidget(
+      { detail: { messages: [message("m1")] } },
+      {
+        renderMessage: (msg, fallback): ReactNode => (
+          <div data-testid="custom">
+            {msg.id}
+            {fallback}
+          </div>
+        ),
+      },
+    );
+    await openThread();
+    const custom = screen.getByTestId("custom");
+    expect(custom.textContent).toContain("m1");
+    expect(within(custom).getByText("Body m1")).toBeTruthy();
+  });
+});
+
+describe("SupportWidget attachments", () => {
+  const withAttachment = {
+    detail: {
+      messages: [message("m1")],
+      attachments: [attachment("a1")],
+    },
+  };
+
+  it("hides the attachment UI when features.attachments is false", async () => {
+    renderWidget({ ...withAttachment, attachments: false });
+    await openThread();
+    expect(screen.queryByText("Attach file")).toBeNull();
+    expect(document.querySelector('input[type="file"]')).toBeNull();
+    // already-stored files of a message are still shown for download
+    expect(screen.getByText("report.pdf")).toBeTruthy();
+  });
+
+  it("shows the attachment UI when features.attachments is true", async () => {
+    renderWidget({ ...withAttachment, attachments: true });
+    await openThread();
+    expect(screen.getByText("Attach file")).toBeTruthy();
+    expect(document.querySelector('input[type="file"]')).not.toBeNull();
+  });
+
+  it("uploads, lists, removes and sends attachments with the reply", async () => {
+    const { mocks } = renderWidget();
+    await openThread();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    const file = new File(["png"], "photo.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText("Remove photo.png")).toBeTruthy();
+    expect(mocks.$fetch).toHaveBeenCalledWith(
+      "/support/upload",
+      expect.objectContaining({
+        method: "POST",
+        query: { ticketId: "t1", filename: "photo.png" },
+        body: file,
+      }),
+    );
+    // customers never send `internal`
+    expect(JSON.stringify(mocks.$fetch.mock.calls[0])).not.toContain(
+      "internal",
+    );
+
+    fireEvent.change(screen.getByLabelText("Reply"), {
+      target: { value: "See" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "See",
+        attachmentIds: ["up1"],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Remove photo.png")).toBeNull(),
+    );
+  });
+
+  it("drops an unsent upload", async () => {
+    renderWidget();
+    await openThread();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "photo.png", { type: "image/png" })] },
+    });
+    fireEvent.click(await screen.findByText("Remove photo.png"));
+    expect(screen.queryByText("Remove photo.png")).toBeNull();
+  });
+
+  it("shows an error when an upload fails", async () => {
+    const { mocks } = renderWidget();
+    mocks.$fetch.mockImplementationOnce(() => failure() as never);
+    await openThread();
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "a.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("The file could not be uploaded."),
+    ).toBeTruthy();
+  });
+
+  it("uploads to the resolved ticket after a merge", async () => {
+    const { mocks } = renderWidget({
+      detail: {
+        ticket: ticket("target", { number: 9, subject: "Merged target" }),
+      },
+    });
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+    await screen.findByRole("heading", { name: /Merged target/ });
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "a.png", { type: "image/png" })] },
+    });
+    await waitFor(() =>
+      expect(mocks.$fetch).toHaveBeenCalledWith(
+        "/support/upload",
+        expect.objectContaining({
+          query: { ticketId: "target", filename: "a.png" },
+        }),
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Reply"), {
+      target: { value: "Hi" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ ticketId: "target" }),
+      ),
+    );
+  });
+
+  it("opens an attachment through openAttachment and a blob URL", async () => {
+    const blob = new Blob(["pdf"], { type: "application/pdf" });
+    const { mocks } = renderWidget(withAttachment);
+    mocks.$fetch.mockImplementationOnce(() => ok(blob) as never);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    await openThread();
+    fireEvent.click(screen.getByRole("button", { name: "Open report.pdf" }));
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(mocks.$fetch).toHaveBeenCalledWith("/support/attachment", {
+      method: "GET",
+      query: { id: "a1" },
+    });
+    expect(URL.createObjectURL).toHaveBeenCalledWith(blob);
+    expect(open.mock.calls[0]?.[0]).toBe("blob:fake");
+    // the URL is still valid for the new tab: not revoked straight away
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("downloads an attachment with its file name", async () => {
+    const blob = new Blob(["pdf"], { type: "application/pdf" });
+    const { mocks } = renderWidget(withAttachment);
+    mocks.$fetch.mockImplementationOnce(() => ok(blob) as never);
+    const clicked: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clicked.push(this);
+    });
+    await openThread();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Download report.pdf" }),
+    );
+
+    await waitFor(() => expect(clicked).toHaveLength(1));
+    expect(clicked[0]?.download).toBe("report.pdf");
+    expect(clicked[0]?.getAttribute("href")).toBe("blob:fake");
+  });
+
+  it("shows an error when an attachment cannot be opened", async () => {
+    const { mocks } = renderWidget(withAttachment);
+    mocks.$fetch.mockImplementationOnce(() => failure() as never);
+    await openThread();
+    fireEvent.click(screen.getByRole("button", { name: "Open report.pdf" }));
+    expect(
+      await screen.findByText("The file could not be opened."),
+    ).toBeTruthy();
+  });
+});
+
+describe("SupportWidget popover and keyboard", () => {
+  it("opens from the launcher and closes on Escape, returning focus", async () => {
+    renderWidget();
+    await openPanel();
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("closes on Escape from inside a thread", async () => {
+    renderWidget();
+    await openThread();
+    fireEvent.keyDown(screen.getByLabelText("Reply"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it("closes on a click outside, not inside", async () => {
+    renderWidget();
+    await openPanel();
+    fireEvent.mouseDown(screen.getByRole("dialog"));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("reaches every control in DOM order, with no positive tabindex", async () => {
+    renderWidget(
+      {
+        detail: {
+          ticket: ticket("t1", { organizationId: "org1" }),
+          attachments: [attachment("a1")],
+        },
+      },
+      { organizationId: "org1" },
+    );
+    await openThread();
+    const panel = screen.getByRole("dialog");
+    const focusable = Array.from(
+      panel.querySelectorAll<HTMLElement>(
+        "button, input, textarea, select, a[href], [tabindex]",
+      ),
+    ).filter((el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled);
+
+    expect(
+      Array.from(panel.querySelectorAll("[tabindex]")).every(
+        (el) => Number(el.getAttribute("tabindex")) <= 0,
+      ),
+    ).toBe(true);
+    const names = focusable.map(
+      (el) =>
+        el.getAttribute("aria-label") ||
+        (el.id && panel.querySelector(`label[for="${el.id}"]`)?.textContent) ||
+        el.closest("label")?.textContent ||
+        el.textContent,
+    );
+    expect(names).toEqual([
+      "Back",
+      "Open report.pdf",
+      "Download report.pdf",
+      "Mark solved",
+      "Good",
+      "Bad",
+      "Share with my organization",
+      "Reply",
+      "Attach file",
+    ]);
+  });
+
+  it("announces the unread count in a live region outside the launcher", async () => {
+    renderWidget({
+      tickets: [ticket("t1", { unread: true }), ticket("t2", { unread: true })],
+    });
+    await waitFor(() => {
+      const region = document.querySelector('[aria-live="polite"]');
+      expect(region?.textContent).toBe("2 unread tickets");
+    });
+    expect(
+      trigger().contains(document.querySelector('[aria-live="polite"]')),
+    ).toBe(false);
+    expect(trigger().getAttribute("aria-describedby")).toBe(
+      document.querySelector('[aria-live="polite"]')?.id,
+    );
+  });
+
+  it("announces nothing with no unread tickets, and uses the label override", async () => {
+    const quiet = renderWidget();
+    await waitFor(() => expect(quiet.mocks.myTickets).toHaveBeenCalled());
+    expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
+      "",
+    );
+    cleanup();
+
+    renderWidget(
+      { tickets: [ticket("t1", { unread: true })] },
+      { labels: { unreadCount: (n) => `${n} tickets need you` } },
+    );
+    await waitFor(() =>
+      expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
+        "1 tickets need you",
+      ),
+    );
+  });
+});
+
+describe("SupportWidget labels", () => {
+  it("renders overridden labels", async () => {
+    renderWidget(
+      { tickets: [ticket("t1", { status: "pending" })] },
+      {
+        labels: {
+          support: "Hilfe",
+          myTickets: "Meine Tickets",
+          newTicket: "Neues Ticket",
+          status: {
+            open: "Offen",
+            pending: "Wartend",
+            solved: "Gelöst",
+            closed: "Zu",
+          },
+          ticketNumber: (n) => `Nr. ${n}`,
+          back: "Zurück",
+          relativeTime: () => "vorhin",
+        },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hilfe" }));
+    expect(
+      await screen.findByRole("heading", { name: "Meine Tickets" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Neues Ticket" })).toBeTruthy();
+    expect(screen.getByText("Wartend")).toBeTruthy();
+    expect(screen.getByText("Nr. 1")).toBeTruthy();
+    expect(screen.getByText("vorhin")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Subject t1/ }));
+    expect(await screen.findByRole("button", { name: "Zurück" })).toBeTruthy();
+  });
+
+  it("keeps the other status labels when only one is overridden", async () => {
+    renderWidget(
+      { tickets: [ticket("t1", { status: "solved" })] },
+      { labels: { status: { solved: "Done" } as never } },
+    );
+    await openPanel();
+    expect(await screen.findByText("Done")).toBeTruthy();
+  });
+
+  it("takes every visible string from labels", async () => {
+    const tagged = (key: string) => `«${key}»`;
+    const labels: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries({
+      ...defaultLabels,
+      ...defaultWidgetLabels,
+    })) {
+      if (key === "status" || key === "priority") {
+        labels[key] = Object.fromEntries(
+          Object.keys(value as object).map((k) => [k, tagged(`${key}.${k}`)]),
+        );
+      } else if (typeof value === "function") {
+        labels[key] = (...args: unknown[]) =>
+          tagged(`${key}:${args.join(",")}`);
+      } else {
+        labels[key] = tagged(key);
+      }
+    }
+    // fixture data the server (not labels) supplies
+    const fixtureText = new Set([
+      "Subject t1",
+      "Subject t2",
+      "Ada",
+      "Body m1",
+      "Body m2",
+      "Body m4",
+      "report.pdf",
+      "photo.png",
+    ]);
+    const texts = (root: Element): string[] => {
+      const found: string[] = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        // what the user typed is not a label
+        if (node.parentElement?.tagName === "TEXTAREA") continue;
+        const text = (node.textContent ?? "").trim();
+        if (/[A-Za-z]/.test(text)) found.push(text);
+      }
+      for (const el of root.querySelectorAll("*")) {
+        for (const attr of ["aria-label", "placeholder", "title", "alt"]) {
+          const value = el.getAttribute(attr);
+          if (value && /[A-Za-z]/.test(value)) found.push(value);
+        }
+      }
+      return found;
+    };
+    const expectTagged = (root: Element) => {
+      const untagged = texts(root).filter(
+        (text) => !text.includes("«") && !fixtureText.has(text),
+      );
+      expect(untagged).toEqual([]);
+    };
+
+    const { container, mocks } = renderWidget(
+      {
+        tickets: [
+          ticket("t1", { unread: true, organizationId: "org1" }),
+          ticket("t2"),
+        ],
+        nextCursor: "c",
+        detail: {
+          ticket: ticket("t1", {
+            organizationId: "org1",
+            status: "solved",
+            unread: false,
+          }),
+          messages: [
+            message("m1"),
+            message("m2", {
+              kind: "event",
+              authorType: "system",
+              author: null,
+              data: { type: "status", from: "open", to: "solved" },
+            }),
+            message("m3", { kind: "event", data: { type: "merged" } }),
+            message("m4", { authorType: "customer", author: null }),
+          ],
+          attachments: [attachment("a1")],
+        },
+      },
+      { labels: labels as never, organizationId: "org1" },
+    );
+    await waitFor(() => expect(mocks.myTickets).toHaveBeenCalled());
+    expectTagged(container);
+
+    // list
+    fireEvent.click(screen.getByRole("button", { name: "«support»" }));
+    await screen.findByText("«myTickets»");
+    expectTagged(container);
+
+    // new ticket form
+    fireEvent.click(screen.getByRole("button", { name: "«newTicket»" }));
+    await screen.findByLabelText("«subject»");
+    expectTagged(container);
+    fireEvent.click(screen.getByRole("button", { name: "«back»" }));
+
+    // thread with attachments, events, composer, upload state
+    fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+    await screen.findByText("Body m1");
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "photo.png", { type: "image/png" })] },
+    });
+    await screen.findByText(/«removeAttachment/);
+    expectTagged(container);
+
+    // failure states
+    mocks.$fetch.mockImplementationOnce(() => failure() as never);
+    fireEvent.click(screen.getByRole("button", { name: /«openAttachment/ }));
+    await screen.findByText("«attachmentFailed»");
+    mocks.$fetch.mockImplementationOnce(() => failure() as never);
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "photo.png", { type: "image/png" })] },
+    });
+    await screen.findByText("«uploadFailed»");
+    mocks.reply.mockImplementationOnce(() => failure() as never);
+    fireEvent.change(screen.getByLabelText("«reply»"), {
+      target: { value: "x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "«send»" }));
+    await screen.findByText("«somethingWrong»");
+    expectTagged(container);
+  });
+
+  it("shows the closed notice from labels", async () => {
+    renderWidget(
+      { detail: { ticket: ticket("t1", { status: "closed" }) } },
+      { labels: { ticketClosed: "Dicht." } },
+    );
+    await openThread();
+    expect(screen.getByText("Dicht.")).toBeTruthy();
+  });
+});
+
+describe("SupportWidget classes and layout", () => {
+  it("applies className and the per-part class props", async () => {
+    const { container } = renderWidget(
+      {
+        detail: {
+          messages: [message("m1")],
+          attachments: [],
+        },
+      },
+      {
+        className: "root-x",
+        listClassName: "list-x",
+        threadClassName: "thread-x",
+        messageClassName: "message-x",
+        composerClassName: "composer-x",
+        buttonClassName: "button-x",
+      },
+    );
+    expect(container.firstElementChild?.className).toContain("root-x");
+    expect(trigger().className).toContain("button-x");
+    // buttonClassName replaces the default look
+    expect(trigger().className).not.toContain("bg-background");
+
+    await openPanel();
+    expect(document.querySelector(".list-x")).not.toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    expect(document.querySelector(".composer-x")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+    await screen.findByText("Body m1");
+    expect(document.querySelector(".thread-x")).not.toBeNull();
+    expect(document.querySelector(".message-x")).not.toBeNull();
+    expect(document.querySelector(".composer-x")).not.toBeNull();
+  });
+
+  it("uses no fixed width above 360px", async () => {
+    const { container } = renderWidget(
+      {
+        tickets: [ticket("t1", { organizationId: "org1" })],
+        nextCursor: "c",
+        detail: {
+          ticket: ticket("t1", { organizationId: "org1" }),
+          attachments: [attachment("a1")],
+        },
+      },
+      { organizationId: "org1" },
+    );
+    const sizes: Record<string, number> = {
+      xs: 320,
+      sm: 384,
+      md: 448,
+      lg: 512,
+      xl: 576,
+      "2xl": 672,
+      "3xl": 768,
+      "4xl": 896,
+      "5xl": 1024,
+      "6xl": 1152,
+      "7xl": 1280,
+    };
+    const toPx = (raw: string): number | null => {
+      const arbitrary = /^\[(-?[\d.]+)(px|rem|em)?\]$/.exec(raw);
+      if (arbitrary) {
+        const n = Number(arbitrary[1]);
+        return arbitrary[2] === "rem" || arbitrary[2] === "em" ? n * 16 : n;
+      }
+      if (raw.startsWith("[")) return null; // calc(), vw, etc.: viewport relative
+      if (raw in sizes) return sizes[raw] as number;
+      if (/^[\d.]+$/.test(raw)) return Number(raw) * 4; // spacing scale
+      return null; // full, screen, fit, min, max, auto, fractions
+    };
+    const tooWide: string[] = [];
+    const scan = () => {
+      for (const el of container.querySelectorAll("[class]")) {
+        for (const token of el.getAttribute("class")?.split(/\s+/) ?? []) {
+          const utility = token.split(":").pop() ?? "";
+          const match = /^(?:min-w|max-w|w|size)-(.+)$/.exec(utility);
+          if (!match) continue;
+          const px = toPx(match[1] as string);
+          if (px !== null && px > 360) tooWide.push(token);
+        }
+      }
+    };
+
+    await openPanel();
+    await screen.findByText(/Subject t1/);
+    scan();
+    fireEvent.click(screen.getByRole("button", { name: "New ticket" }));
+    await screen.findByLabelText("Subject");
+    scan();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+    await screen.findByText("Body m1");
+    scan();
+
+    expect(tooWide).toEqual([]);
+    // the panel is capped at 360px and never wider than the viewport
+    const panel = screen.getByRole("dialog");
+    expect(panel.className).toContain("max-w-[22.5rem]");
+    expect(panel.className).toContain("w-[calc(100vw-2rem)]");
+  });
+});
