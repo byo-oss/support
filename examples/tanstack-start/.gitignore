@@ -1,0 +1,8 @@
+node_modules
+.tarballs/
+*.db
+.output
+.tanstack
+dist
+.e2e
+pnpm-lock.yaml
