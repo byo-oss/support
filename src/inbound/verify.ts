@@ -5,7 +5,11 @@
 //
 // Loads mailauth with a dynamic import() only, so the root entry stays light.
 
-/** A DNS TXT resolver in mailauth's shape, injectable so tests stub DNS. */
+/**
+ * A DNS TXT resolver in mailauth's shape, as `inbound.resolver` takes it:
+ * `(name, "TXT")` resolves the records (each an array of strings) or throws
+ * (`ENOTFOUND` for none).
+ */
 export type DkimResolver = (
   name: string,
   rrtype: string,

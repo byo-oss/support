@@ -17,8 +17,8 @@ function rejectStatus(status: number): number {
  * `receiveSupportEmail`: POST `/support/inbound`, credential-free,
  * `disableBody: true`, `requireRequest: true`. Without `inbound`: 404 `INBOUND_NOT_CONFIGURED`.
  * Otherwise `opts.inbound.source.receive(request)`: `{ reject }` is answered
- * with that status, a throw with 502, `{ raw }` goes to `receiveEmail` and is
- * answered 202 whatever it decided.
+ * with that status, a throw with 502, `{ raw }` goes to `receiveEmail` (with
+ * `inbound.resolver` for the DKIM check) and is answered 202 whatever it decided.
  */
 export function inboundEndpoints(opts: ResolvedSupportOptions) {
   return {
@@ -65,7 +65,9 @@ export function inboundEndpoints(opts: ResolvedSupportOptions) {
             status,
           );
         }
-        await receiveEmail(endpointRuntime(ctx, opts), received.raw);
+        await receiveEmail(endpointRuntime(ctx, opts), received.raw, {
+          resolver: inbound.resolver,
+        });
         ctx.setStatus(202);
         return { ok: true } satisfies OkResponse;
       },

@@ -136,6 +136,8 @@ export function ThreadView({
   const status = ticket?.status;
   const canSolve = status === "open" || status === "pending";
   const canReopen = status === "solved";
+  // a rating is about how the ticket ended, so it's asked once it has
+  const canRate = status === "solved" || status === "closed";
   const requester = ticket ? canActAsRequester(ticket) : false;
   const showError = thread.error !== null || actionError;
 
@@ -246,29 +248,31 @@ export function ThreadView({
               </button>
             ) : null}
           </div>
-          <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0">
-            <legend className="float-left mr-2 p-0 text-sm text-muted-foreground">
-              {labels.ratePrompt}
-            </legend>
-            {(["good", "bad"] as const).map((rating) => (
-              <button
-                key={rating}
-                type="button"
-                aria-pressed={ticket.rating === rating}
-                className={cn(
-                  buttonBase,
-                  ticket.rating === rating &&
-                    "bg-accent text-accent-foreground",
-                )}
-                onClick={() => {
-                  if (ticket.rating !== rating)
-                    void run(thread.update({ rating }));
-                }}
-              >
-                {rating === "good" ? labels.rateGood : labels.rateBad}
-              </button>
-            ))}
-          </fieldset>
+          {canRate ? (
+            <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0">
+              <legend className="float-left mr-2 p-0 text-sm text-muted-foreground">
+                {labels.ratePrompt}
+              </legend>
+              {(["good", "bad"] as const).map((rating) => (
+                <button
+                  key={rating}
+                  type="button"
+                  aria-pressed={ticket.rating === rating}
+                  className={cn(
+                    buttonBase,
+                    ticket.rating === rating &&
+                      "bg-accent text-accent-foreground",
+                  )}
+                  onClick={() => {
+                    if (ticket.rating !== rating)
+                      void run(thread.update({ rating }));
+                  }}
+                >
+                  {rating === "good" ? labels.rateGood : labels.rateBad}
+                </button>
+              ))}
+            </fieldset>
+          ) : null}
           {ticket.organizationId ? (
             <label className="flex items-center gap-2 text-sm">
               <input

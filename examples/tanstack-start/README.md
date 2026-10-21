@@ -25,9 +25,10 @@ Sign in as the customer (`customer@example.dev` / `customer-password-123`), open
   Shared with `scripts/migrate.ts` and `scripts/seed.ts`, which run under plain Node.
 - `src/lib/auth.ts`: adds `tanstackStartCookies()` last, for server functions.
 - `src/lib/auth-client.ts`: `supportClient()`.
-- `src/routes/help.tsx`: `<SupportWidget client={authClient} variant="inline" ticketId={ticket} />` for
+- `src/routes/help.tsx`: `<SupportWidget client={authClient} variant="inline" ticketId={ticket} onTicketChange={...} />` for
   signed-in customers: the panel is rendered in the page, not as a popover.
-  `?ticket=<id>` opens that ticket's thread, which is where reply emails link (`ticketPath` in `auth-options.ts`).
+  `?ticket=<id>` opens that ticket's thread, which is where reply emails link (`ticketPath` in `auth-options.ts`),
+  and `onTicketChange` updates it as the user opens tickets and goes Back.
 - `src/routes/inbox.tsx`: `<SupportInbox client={authClient} agents={agents} ticketId={id} onTicketChange={...} />`.
   `agents` are the staff organization's members, loaded by the server function in `src/lib/agents.ts`.
   It is the layout for `/inbox` and `/inbox/$id`: `src/routes/inbox.$id.tsx` only declares the `id` param,

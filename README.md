@@ -172,12 +172,13 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 | `email.ticketPath` | `(id) => string` | `` (id) => `/support/${id}` `` | Path of a ticket in your app. Set it if the default could collide with your routes (a top-level `/:org` segment, for example) |
 | `email.replyDelay` | number (ms) | `120000` | Delay before an agent reply is mailed. Skipped if the requester saw the reply first. `0` sends at once; must be 0 or more |
 | `email.requireVerifiedEmail` | boolean | `true` | Mail account holders only at a verified address |
-| `inbound` | `{ source, newTickets?, maxPerSenderPerHour?, maxUnverifiedPerHour?, maxBytes? }` | | Receive email at `/support/inbound`. Requires `email` |
+| `inbound` | `{ source, newTickets?, maxPerSenderPerHour?, maxUnverifiedPerHour?, maxBytes?, resolver? }` | | Receive email at `/support/inbound`. Requires `email` |
 | `inbound.source` | `SupportInboundSource` | required | `rawRelay(...)` or `wrapsInbound(...)` |
 | `inbound.newTickets` | boolean | `true` | Open a new ticket for mail that doesn't thread. A requester's reply to a closed ticket still opens its follow-up |
 | `inbound.maxPerSenderPerHour` | number | `20` | Verified email replies stored per sender in the last hour before more are dropped |
 | `inbound.maxUnverifiedPerHour` | number | `100` | Unverified messages stored in the last hour, across all senders, before more are dropped |
 | `inbound.maxBytes` | number | `26214400` (25 MiB) | Largest raw message accepted |
+| `inbound.resolver` | `DkimResolver`: `(name, rrtype) => Promise<string[] \| string[][]>` | system DNS | DNS TXT lookups for the DKIM check, for tests and custom DNS. Serve a test key from it to test inbound threading without patching `node:dns` (see [Inbound email](#inbound-email)) |
 | `attachments` | `{ storage, maxBytes?, allowedTypes? }` | | Enable attachments. Unset: no `supportAttachment` table, uploads answer `STORAGE_NOT_CONFIGURED` |
 | `attachments.storage` | `SupportStorage` | required | `s3Storage(...)`, or your own |
 | `attachments.maxBytes` | number | `10485760` (10 MiB) | Largest upload |
@@ -243,7 +244,8 @@ The owner role has every `support` action once step 2 is done. The other route i
 
 `variant="inline"` renders the panel in place instead, at the full width of its container, with no launcher, and it never closes. Use it for a page of its own: "My tickets", or the page your email links open.
 
-- `ticketId` opens that ticket's thread (a popover starts open unless `defaultOpen` or `open` says otherwise). A new value opens that ticket; Back goes to the list.
+- `ticketId` opens that ticket's thread (a popover starts open unless `defaultOpen` or `open` says otherwise). A new value opens that ticket; `null` or `undefined` after a ticket goes back to the list. Back goes to the list.
+- `onTicketChange(id | null)` is called when the user opens a ticket (a row, or the one they just created) with its id, and with `null` when they go Back to the list or the new-ticket form. Sync your URL with it, so Back on an inline page doesn't leave the address on the old ticket. Changes that come from the `ticketId` prop never call it.
 - `defaultOpen` sets whether the popover starts open (default: open when `ticketId` is set).
 - `open` and `onOpenChange` control the popover. The launcher, Escape and a click outside call `onOpenChange`, and the panel follows `open`. When your app sets `open` to `true` (not the launcher) while `ticketId` is set, the panel shows that ticket's thread. That is how the same link opens the same ticket again after the user closed the panel: set `open` back to `true`. The launcher reopens wherever the user left off.
 
@@ -254,23 +256,36 @@ const [open, setOpen] = useState(Boolean(ticketId));
 
 ### Deep links
 
-**Customers.** Email links (`ticketPath(id)`) and in-app notifications should open a page with the inline widget, which works at any width and doesn't close on the first click:
+**Customers.** Email links (`ticketPath(id)`) and in-app notifications should open a page with the inline widget, which works at any width and doesn't close on the first click. Pass `onTicketChange` so the URL follows the widget:
 
 ```tsx
 // /help?ticket=<id>, or whatever ticketPath returns
-<SupportWidget client={authClient} variant="inline" ticketId={ticket ?? undefined} onNavigate={(href) => router.push(href)} />
+<SupportWidget
+  client={authClient}
+  variant="inline"
+  ticketId={ticket ?? null}
+  onTicketChange={(next) => router.push(next ? `/help?ticket=${next}` : "/help")}
+  onNavigate={(href) => router.push(href)}
+/>
 ```
 
-**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`, called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop. For example, rendered on both `/staff/support` and `/staff/support/$id` with TanStack Router:
+Keep the page and the ticket on one route: a query parameter as above, an optional path parameter, or a layout route that renders the widget for both paths. Two sibling routes (`/help` and `/help/:id`, each rendering its own widget) remount the component every time the user opens a ticket or goes Back: it loads the list again from the first page and loses its scroll position and any pages loaded with "Load more".
+
+**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`, called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop.
+
+Render the inbox once, for both `/staff/support` and `/staff/support/:id`: from one route with an optional `:id`, or from a layout route whose child only declares the param. Don't render it from two sibling routes. Moving between siblings unmounts one inbox and mounts another, which loses the search, the filters and the checked rows every time the user opens or closes a ticket. For example, a TanStack Router layout route `/staff/support` with a child `/staff/support/$id` that has no component of its own:
 
 ```tsx
-export function StaffSupport({ ticketId, agents }: { ticketId?: string; agents: SupportAgent[] }) {
+// routes/staff.support.tsx: renders for /staff/support and /staff/support/<id>
+function StaffSupport() {
   const navigate = useNavigate();
+  const { id } = useParams({ strict: false }); // set by the child route
+  const { agents } = Route.useLoaderData();
   return (
     <SupportInbox
       client={authClient}
       agents={agents}
-      ticketId={ticketId ?? null}
+      ticketId={id ?? null}
       onTicketChange={(next) => navigate({ href: next ? `/staff/support/${next}` : "/staff/support" })}
       onNavigate={(href) => navigate({ href })}
     />
@@ -278,7 +293,7 @@ export function StaffSupport({ ticketId, agents }: { ticketId?: string; agents: 
 }
 ```
 
-With Next.js, pass the id from the route's params and push the same paths with `router.push`.
+With Next.js, render the inbox from `app/staff/support/layout.tsx` (a layout stays mounted as its child pages change), read the id with `useParams()`, give `app/staff/support/page.tsx` and `app/staff/support/[id]/page.tsx` nothing to render, and push the same paths with `router.push`.
 
 ### Staff list (`agents`)
 
@@ -392,7 +407,7 @@ support({
 
 The endpoint is `POST <your auth base path>/support/inbound`, for example `https://app.acme.com/api/auth/support/inbound`. It takes no session: the **source** authenticates the relay and reads the raw RFC 822 bytes. Route all mail for `replyDomain`, plus-addresses included, and your public support address to it.
 
-**`rawRelay({ secret, maxBytes? })`** works with any relay that POSTs the raw message (`Content-Type: message/rfc822`) with `Authorization: Bearer <secret>`: Postmark inbound, Mailgun routes, a Cloudflare Email Worker. The secret is compared in constant time (401 on a mismatch), a message over `maxBytes` (25 MiB by default) answers 413 and an empty body 400.
+**`rawRelay({ secret, maxBytes? })`** works with any relay that POSTs the raw message (`Content-Type: message/rfc822`) with `Authorization: Bearer <secret>`: Postmark inbound, Mailgun routes, a Cloudflare Email Worker. The secret is compared in constant time (401 on a mismatch), a message over `maxBytes` (25 MiB by default) answers 413 and an empty body 400. The secret must not contain whitespace: the bearer token can't carry it, so `rawRelay` throws at boot rather than answer 401 to every message (trim a value read from a file).
 
 **`wrapsInbound({ key, bucket, region, client?, maxBytes? })`** from `@byo-oss/support/wraps` takes Wraps inbound mail (SES to S3, announced by an EventBridge `email.received` event). Point an EventBridge API destination at the endpoint with the header `X-Wraps-Inbound-Key: <key>`. The source reads `rawS3Key` from the event (the whole event or just its `detail`) and fetches that object. It needs `@aws-sdk/client-s3` and a role that can read the bucket:
 
@@ -419,7 +434,15 @@ What the endpoint does with a message:
 - **Links to accounts** only verified mail from a verified account. Unverified mail from an account holder's address is stored as an account-less sender (`requesterEmail`), so a forged `From:` can't put a ticket in someone's account. When a user later verifies that address, their verified tickets and messages are linked to them (`linkSupportRequester` does the same on demand).
 - **Stores** the plain text part with the quoted reply stripped. The raw message is not stored. With `attachments`, parts are stored under the same limits; a part that is over the limit, of a disallowed type or fails to store is dropped, and an `attachment_dropped` event row records it.
 
-Test your own source with `testSupportInboundSource` from `@byo-oss/support/testing`.
+Test your own source with `testSupportInboundSource` from `@byo-oss/support/testing`. To test threading end to end without real DNS, sign test mail with a key of your own (`dkimSign` from `mailauth`, say) and serve its public key through `inbound.resolver`:
+
+```ts
+const resolver: DkimResolver = async (name, rrtype) => {
+  if (rrtype === "TXT" && name === "test._domainkey.customer.test") return [[`v=DKIM1; k=rsa; p=${publicKey}`]];
+  throw Object.assign(new Error(`ENOTFOUND ${name}`), { code: "ENOTFOUND" });
+};
+support({ /* ... */ inbound: { source: rawRelay({ secret }), resolver } });
+```
 
 ## Attachments
 
@@ -543,7 +566,7 @@ const onEvent = createEventBus([
       case "support.customer.replied": {
         const title = event.type === "support.ticket.created" ? "New support ticket" : "Customer replied";
         for (const userId of await supportStaff(event.actorId)) {
-          // `/staff/support/:id` renders <SupportInbox ticketId={id} /> (see Deep links)
+          // the /staff/support layout renders <SupportInbox ticketId={id} /> for /staff/support/:id (see Deep links)
           await auth.api.notify({
             body: { userId, type: event.type, title, href: `/staff/support/${ticketId}` },
           });
@@ -637,7 +660,7 @@ Server-only functions (not endpoints), for your own scripts and hooks:
 | `deleteSupportRequesterData(auth, { email })` | Erases an account-less person → `{ tickets, messages }` |
 | `linkSupportRequester(auth, userId)` | Links a verified user's account-less history → `{ tickets, messages }` |
 
-Also exported from the root: `supportStatements`, `supportRoles`, `SUPPORT_ERROR_CODES`, `SUPPORT_EVENT_TYPES`, `rawRelay`, and the types `SupportOptions`, `SupportEvent`, `Mailer`, `SupportInboundSource`, `SupportStorage` and the rest of the option and response types. From `@byo-oss/support/react`: `SupportWidget`, `SupportInbox`, and the headless hooks `useSupportTickets`, `useSupportTicket`, `useSupportQueue`, `useSupportAgentTicket`, `useSupportCannedReplies` and `useSupportUpload`, with `defaultLabels`, `defaultWidgetLabels` and `defaultInboxLabels`.
+Also exported from the root: `supportStatements`, `supportRoles`, `SUPPORT_ERROR_CODES`, `SUPPORT_EVENT_TYPES`, `rawRelay`, and the types `SupportOptions`, `SupportEvent`, `Mailer`, `SupportInboundSource`, `SupportStorage`, `DkimResolver` and the rest of the option and response types. From `@byo-oss/support/react`: `SupportWidget`, `SupportInbox`, and the headless hooks `useSupportTickets`, `useSupportTicket`, `useSupportQueue`, `useSupportAgentTicket`, `useSupportCannedReplies` and `useSupportUpload`, with `defaultLabels`, `defaultWidgetLabels` and `defaultInboxLabels`.
 
 ### Error codes
 
@@ -891,7 +914,9 @@ The components are styled with Tailwind classes only: without Tailwind they rend
 
 The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`, which current shadcn themes don't define.
 
-Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button. To override a utility the component already sets (a padding, say), use Tailwind's `!` important modifier or a more specific selector.
+Class props append to the component's own classes; they never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts. On the widget, `buttonClassName` is the launcher's; on the inbox it goes on every action button.
+
+There is no class merging: your classes are added after the defaults as they are, and nothing like `tailwind-merge` removes a default that conflicts. When both set the same property (`p-4` on top of the component's `p-3`, say), the order of the rules in the generated CSS decides, not the order of the classes, so yours may lose. To win, use Tailwind's `!` important modifier (`p-4!`) or a more specific variant or selector. Running your own string through a merge helper (`cn(...)`) only tidies that string; it can't take a default away.
 
 ## License
 

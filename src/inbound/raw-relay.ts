@@ -1,7 +1,7 @@
 import type { SupportInboundSource } from "../options";
 
 export type RawRelayOptions = {
-  /** Shared secret the relay sends as `Authorization: Bearer <secret>`. */
+  /** Shared secret the relay sends as `Authorization: Bearer <secret>`. No whitespace. */
   secret: string;
   /** Largest message accepted, in bytes; larger answers 413. @default 26214400 */
   maxBytes?: number;
@@ -104,7 +104,7 @@ function bearer(headers: Headers): string | null {
  *
  * An empty body answers 400. A body stream that fails while it's read throws,
  * so the endpoint answers 502 and the relay retries. Throws at setup when
- * `secret` is empty.
+ * `secret` is empty or contains whitespace.
  *
  * ```ts
  * inbound: { source: rawRelay({ secret: process.env.SUPPORT_INBOUND_SECRET! }) }
@@ -115,6 +115,13 @@ export function rawRelay(options: RawRelayOptions): SupportInboundSource {
   const maxBytes = options.maxBytes ?? DEFAULT_INBOUND_MAX_BYTES;
   if (typeof secret !== "string" || secret.length === 0) {
     throw new Error("[@byo-oss/support] rawRelay needs a non-empty secret");
+  }
+  // the bearer token is read as one run of non-space characters, so a secret
+  // with whitespace in it (a trailing newline from an env file) never matches
+  if (/\s/.test(secret)) {
+    throw new Error(
+      "[@byo-oss/support] rawRelay secret must not contain whitespace",
+    );
   }
   if (!Number.isInteger(maxBytes) || maxBytes < 1) {
     throw new Error(

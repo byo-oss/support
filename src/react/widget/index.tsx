@@ -40,10 +40,18 @@ export type SupportWidgetProps = {
    * Opens this ticket's thread, for links from emails (route `ticketPath(id)`
    * to a page that renders `<SupportWidget variant="inline" ticketId={id} />`).
    * A popover starts open unless `defaultOpen` or `open` says otherwise. A new
-   * value opens that ticket; Back still goes to the list. A ticket the caller
-   * can't read shows the thread's error state.
+   * value opens that ticket; `null` or `undefined` after a ticket goes back to
+   * the list. Back still goes to the list. A ticket the caller can't read
+   * shows the thread's error state. Changes from this prop never call
+   * `onTicketChange`.
    */
-  ticketId?: string;
+  ticketId?: string | null;
+  /**
+   * Called when the user changes the open ticket (opening a row, creating a
+   * ticket, Back) with its id, or `null` when no ticket is open (the list or
+   * the new-ticket form). Sync your URL here.
+   */
+  onTicketChange?: (ticketId: string | null) => void;
   /** Popover only: whether the panel starts open. @default Boolean(ticketId) */
   defaultOpen?: boolean;
   /**
@@ -112,6 +120,7 @@ export function SupportWidget({
   organizationId,
   variant = "popover",
   ticketId,
+  onTicketChange,
   defaultOpen,
   open: openProp,
   onOpenChange,
@@ -156,12 +165,24 @@ export function SupportWidget({
   const [view, setView] = useState<View>(
     ticketId ? { name: "thread", ticketId } : { name: "list" },
   );
+  // the open ticket as last shown, whoever changed it: the prop's changes
+  // update it too, so the user's next move is compared with what's on screen
+  const openId = view.name === "thread" ? view.ticketId : null;
+  const openIdRef = useRef(openId);
+  openIdRef.current = openId;
+  const onTicketChangeRef = useRef(onTicketChange);
+  onTicketChangeRef.current = onTicketChange;
   // an inline widget's first view leaves focus where the page put it; a
   // view the user moves to takes focus
   const navigated = useRef(false);
+  /** A view the user moved to: tell the app when the open ticket changed, so it can sync its URL. */
   const go = useCallback((next: View) => {
     navigated.current = true;
     setView(next);
+    const id = next.name === "thread" ? next.ticketId : null;
+    if (openIdRef.current === id) return;
+    openIdRef.current = id;
+    onTicketChangeRef.current?.(id);
   }, []);
   const focusOnMount = !inline || navigated.current;
 
@@ -170,13 +191,21 @@ export function SupportWidget({
   const panelId = useId();
   const countId = useId();
 
-  // a deep link (or a new one, on client-side navigation) opens its ticket
-  const linked = useRef(ticketId);
+  // a deep link (or a new one, on client-side navigation) opens its ticket;
+  // the link going away (the app's router after Back, or the browser's)
+  // leaves the thread for the list. Never reported to onTicketChange.
+  const linked = useRef(ticketId ?? null);
   useEffect(() => {
-    if (linked.current === ticketId) return;
-    linked.current = ticketId;
-    if (!ticketId) return;
-    setView({ name: "thread", ticketId });
+    const next = ticketId ?? null;
+    if (linked.current === next) return;
+    linked.current = next;
+    if (!next) {
+      setView((current) =>
+        current.name === "thread" ? { name: "list" } : current,
+      );
+      return;
+    }
+    setView({ name: "thread", ticketId: next });
     if (!inline && !openRef.current) setOpen(true);
   }, [ticketId, inline, setOpen]);
 

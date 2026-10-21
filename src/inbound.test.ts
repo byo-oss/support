@@ -1124,6 +1124,71 @@ describe("receiveSupportEmail (POST /support/inbound)", () => {
     expect(dns.queried).toContain(`TXT ${SELECTOR}._domainkey.customer.test`);
   });
 
+  it("checks DKIM with inbound.resolver from options, never system DNS", async () => {
+    // the option's resolver serves the same test key, without the system
+    // DNS stub (which records every query in `dns.queried`)
+    const withKey = vi.fn<DkimResolver>(async (name, rrtype) => {
+      const txt =
+        rrtype === "TXT" ? dns.records.get(name.toLowerCase()) : undefined;
+      if (txt) return [[txt]];
+      throw Object.assign(new Error(`ENOTFOUND ${name}`), {
+        code: "ENOTFOUND",
+      });
+    });
+    const noKey = vi.fn<DkimResolver>(async (name) => {
+      throw Object.assign(new Error(`ENOTFOUND ${name}`), {
+        code: "ENOTFOUND",
+      });
+    });
+
+    const good = await setup({ resolver: withKey });
+    const thread = await webTicket(good.rt, good.world.customer);
+    // one signed reply by token, posted byte for byte to both apps
+    const reply = await signed({
+      template: "reply",
+      from: good.world.customer.user.email,
+      to: tokenAddress(thread),
+      messageId: "<resolver-option@acme.test>",
+      body: "Here is INV-7.",
+    });
+
+    expect((await good.post(reply)).status).toBe(202);
+    const appended = await messagesOf(good.rt, thread.id);
+    expect(appended).toHaveLength(2);
+    expect(appended[1]).toMatchObject({
+      body: "Here is INV-7.",
+      userId: good.world.customer.user.id,
+      verified: true,
+    });
+    expect(withKey).toHaveBeenCalledWith(
+      `${SELECTOR}._domainkey.acme.test`,
+      "TXT",
+    );
+
+    const bad = await setup({ resolver: noKey });
+    const other = await webTicket(bad.rt, bad.world.customer);
+    await bad.rt.adapter.update({
+      model: "supportTicket",
+      where: [{ field: "id", value: other.id }],
+      update: { replyToken: thread.replyToken },
+    });
+    expect((await bad.post(reply)).status).toBe(202);
+    // unverified: never appended, stored as its own account-less ticket
+    expect(await messagesOf(bad.rt, other.id)).toHaveLength(1);
+    const created = (await tickets(bad.rt)).find((t) => t.id !== other.id);
+    expect(created).toMatchObject({
+      verified: false,
+      userId: null,
+      requesterEmail: bad.world.customer.user.email,
+    });
+    expect(noKey).toHaveBeenCalledWith(
+      `${SELECTOR}._domainkey.acme.test`,
+      "TXT",
+    );
+
+    expect(dns.queried).toEqual([]);
+  });
+
   it("answers 202 for a duplicate Message-ID and adds no row", async () => {
     const { rt, post } = await setup();
     const raw = await signed({ messageId: "<retry@customer.test>" });

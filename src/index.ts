@@ -106,6 +106,7 @@ export {
   type SupportExportPage,
 } from "./export";
 export { type RawRelayOptions, rawRelay } from "./inbound/raw-relay";
+export type { DkimResolver } from "./inbound/verify";
 export {
   deleteMemberData,
   deleteOrganizationData,

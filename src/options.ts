@@ -1,6 +1,7 @@
 import type { ByoEventHandler } from "@byo-oss/core";
 import type { Mailer } from "@byo-oss/mailer";
 import type { InferOptionSchema, Session, User } from "better-auth";
+import type { DkimResolver } from "./inbound/verify";
 import type { SupportSchema } from "./schema";
 
 export type { Mailer, MailMessage, MailResult } from "@byo-oss/mailer";
@@ -142,6 +143,12 @@ export type SupportInboundOptions = {
   maxUnverifiedPerHour?: number;
   /** Largest raw message accepted, in bytes. @default 26214400 (25 MiB) */
   maxBytes?: number;
+  /**
+   * DNS TXT lookups for the DKIM check, for tests and custom DNS: serve a
+   * test key to test inbound threading without patching `node:dns`.
+   * @default the system resolver (Node's `dns`, 5 s timeout)
+   */
+  resolver?: DkimResolver;
 };
 
 export type SupportAttachmentOptions = {
@@ -232,6 +239,8 @@ export type ResolvedInboundOptions = {
   maxPerSenderPerHour: number;
   maxUnverifiedPerHour: number;
   maxBytes: number;
+  /** The app's resolver, or undefined for the system resolver. */
+  resolver: DkimResolver | undefined;
 };
 
 export type ResolvedAttachmentOptions = {
@@ -447,6 +456,7 @@ export function resolveOptions(
         options.inbound.maxBytes,
         26_214_400,
       ),
+      resolver: options.inbound.resolver,
     };
   }
 

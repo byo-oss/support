@@ -28,11 +28,15 @@ function Help() {
     <div style={{ display: "grid", gap: 12 }}>
       <h1>Help</h1>
       {/* inline: the panel fills the page, with no launcher. `ticketId` opens a linked
-          ticket; `onNavigate` receives in-app links */}
+          ticket and `onTicketChange` keeps `?ticket=` in step when the user opens a ticket
+          or goes Back; `onNavigate` receives in-app links */}
       <SupportWidget
         client={authClient}
         variant="inline"
-        ticketId={ticket}
+        ticketId={ticket ?? null}
+        onTicketChange={(next) =>
+          navigate({ to: "/help", search: next ? { ticket: next } : {} })
+        }
         onNavigate={(href) => navigate({ href })}
       />
     </div>

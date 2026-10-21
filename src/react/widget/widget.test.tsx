@@ -453,7 +453,7 @@ describe("SupportWidget thread", () => {
 
   it("rates good or bad, and shows the current rating", async () => {
     const { mocks } = renderWidget({
-      detail: { ticket: ticket("t1", { rating: "bad" }) },
+      detail: { ticket: ticket("t1", { status: "solved", rating: "bad" }) },
     });
     await openThread();
     const good = screen.getByRole("button", { name: "Good" });
@@ -469,6 +469,33 @@ describe("SupportWidget thread", () => {
         rating: "good",
       }),
     );
+  });
+
+  it("asks for a rating only on a solved or closed ticket", async () => {
+    for (const status of ["open", "pending"]) {
+      renderWidget({ detail: { ticket: ticket("t1", { status }) } });
+      await openThread();
+      expect(screen.queryByText("How did we do?"), status).toBeNull();
+      expect(screen.queryByRole("button", { name: "Good" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Bad" })).toBeNull();
+      cleanup();
+    }
+    for (const status of ["solved", "closed"]) {
+      const { mocks } = renderWidget({
+        detail: { ticket: ticket("t1", { status }) },
+      });
+      await openThread();
+      expect(screen.getByText("How did we do?"), status).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Bad" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Good" }));
+      await waitFor(() =>
+        expect(mocks.updateMine).toHaveBeenCalledWith({
+          id: "t1",
+          rating: "good",
+        }),
+      );
+      cleanup();
+    }
   });
 
   it("shares with the organization, and unshares", async () => {
@@ -549,8 +576,13 @@ describe("SupportWidget thread", () => {
           name: status === "open" ? "Mark solved" : "Reopen",
         }),
       ).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Good" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Bad" })).toBeTruthy();
+      // the rating waits for a solved ticket
+      if (status === "solved") {
+        expect(screen.getByRole("button", { name: "Good" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Bad" })).toBeTruthy();
+      } else {
+        expect(screen.queryByRole("button", { name: "Good" })).toBeNull();
+      }
       expect(screen.getByLabelText("Share with my organization")).toBeTruthy();
       cleanup();
     }
@@ -934,7 +966,7 @@ describe("SupportWidget popover and keyboard", () => {
     renderWidget(
       {
         detail: {
-          ticket: ticket("t1", { organizationId: "org1" }),
+          ticket: ticket("t1", { organizationId: "org1", status: "solved" }),
           attachments: [attachment("a1")],
         },
       },
@@ -963,7 +995,7 @@ describe("SupportWidget popover and keyboard", () => {
     expect(names).toEqual([
       "Back",
       "Download report.pdf",
-      "Mark solved",
+      "Reopen",
       "Good",
       "Bad",
       "Share with my organization",
@@ -1238,6 +1270,153 @@ describe("SupportWidget inline variant", () => {
       />,
     );
     await screen.findByRole("heading", { name: /Subject t1/ });
+  });
+});
+
+describe("SupportWidget onTicketChange", () => {
+  async function createFromForm() {
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    fireEvent.change(await screen.findByLabelText("Subject"), {
+      target: { value: "Printer" },
+    });
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "It is on fire" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Submit ticket" }));
+  }
+
+  it("inline: reports opening a row, creating a ticket and Back, not the initial ticketId", async () => {
+    const onTicketChange = vi.fn();
+    renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { variant: "inline", ticketId: "t2", onTicketChange },
+    );
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(onTicketChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "My tickets" });
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+
+    fireEvent.click(screen.getByRole("button", { name: /Subject t1/ }));
+    expect(onTicketChange).toHaveBeenLastCalledWith("t1");
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+    expect(onTicketChange).toHaveBeenCalledTimes(3);
+
+    // the new-ticket form has no open ticket either: list -> form -> list is no change
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "My tickets" });
+    expect(onTicketChange).toHaveBeenCalledTimes(3);
+
+    await createFromForm();
+    await waitFor(() => expect(onTicketChange).toHaveBeenLastCalledWith("new"));
+    expect(onTicketChange).toHaveBeenCalledTimes(4);
+  });
+
+  it("inline: never reports changes from the ticketId prop, and null goes back to the list", async () => {
+    const onTicketChange = vi.fn();
+    const { client, mocks, rerender } = renderWidget(
+      { detail: { ticket: ticket("t1") } },
+      { variant: "inline", onTicketChange },
+    );
+    await screen.findByRole("heading", { name: "My tickets" });
+    const props = {
+      client,
+      pollInterval: 0,
+      badgePollInterval: 0,
+      variant: "inline" as const,
+      onTicketChange,
+    };
+
+    rerender(<SupportWidget {...props} ticketId="t1" />);
+    await screen.findByRole("heading", { name: /Subject t1/ });
+    mocks.ticket.mockImplementation(() =>
+      ok({ ticket: ticket("t2"), messages: [], attachments: [] }),
+    );
+    rerender(<SupportWidget {...props} ticketId="t2" />);
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    // the browser's back button: the link goes away, the widget follows
+    rerender(<SupportWidget {...props} ticketId={null} />);
+    await screen.findByRole("heading", { name: "My tickets" });
+    expect(onTicketChange).not.toHaveBeenCalled();
+
+    // the user's next move is compared with what the prop put on screen
+    rerender(<SupportWidget {...props} ticketId="t2" />);
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onTicketChange).toHaveBeenCalledTimes(1);
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("inline: keeps a page's URL in step both ways", async () => {
+    const { client } = makeClient({ detail: { ticket: ticket("t2") } });
+    const urls: Array<string | null> = [];
+    function Page() {
+      const [ticketId, setTicketId] = useState<string | null>("t2");
+      return (
+        <SupportWidget
+          client={client}
+          pollInterval={0}
+          variant="inline"
+          ticketId={ticketId}
+          onTicketChange={(next) => {
+            urls.push(next);
+            setTicketId(next);
+          }}
+        />
+      );
+    }
+    render(<Page />);
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "My tickets" });
+    fireEvent.click(screen.getByRole("button", { name: /Subject t1/ }));
+    await screen.findByRole("button", { name: "Back" });
+    expect(urls).toEqual([null, "t1"]);
+  });
+
+  it("popover: reports the user's moves, not opening, closing or the initial ticketId", async () => {
+    const onTicketChange = vi.fn();
+    const { client, rerender } = renderWidget(
+      { detail: { ticket: ticket("t2") } },
+      { ticketId: "t2", onTicketChange },
+    );
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.click(trigger());
+    await screen.findByRole("heading", { name: /Subject t2/ });
+    expect(onTicketChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onTicketChange).toHaveBeenLastCalledWith(null);
+    fireEvent.click(await screen.findByRole("button", { name: /Subject t1/ }));
+    expect(onTicketChange).toHaveBeenLastCalledWith("t1");
+    expect(onTicketChange).toHaveBeenCalledTimes(2);
+
+    // a new ticketId from the app opens that ticket without echoing it
+    rerender(
+      <SupportWidget
+        client={client}
+        pollInterval={0}
+        badgePollInterval={0}
+        ticketId="t1"
+        onTicketChange={onTicketChange}
+      />,
+    );
+    await screen.findByRole("button", { name: "Back" });
+    expect(onTicketChange).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await createFromForm();
+    await waitFor(() => expect(onTicketChange).toHaveBeenLastCalledWith("new"));
+    expect(onTicketChange.mock.calls).toEqual([
+      [null],
+      ["t1"],
+      [null],
+      ["new"],
+    ]);
   });
 });
 

@@ -306,6 +306,21 @@ describe("rawRelay", () => {
     expect(() => rawRelay({ secret: "" })).toThrow(/non-empty secret/);
     expect(() => rawRelay({ secret: SECRET, maxBytes: 0 })).toThrow(/maxBytes/);
   });
+
+  it("throws at setup for a secret with whitespace, which could never match", () => {
+    // a trailing newline from an env file is the usual way in
+    for (const secret of [
+      `${SECRET}\n`,
+      ` ${SECRET}`,
+      "two words",
+      `${SECRET}\t`,
+      `${SECRET}\r\n`,
+    ]) {
+      expect(() => rawRelay({ secret }), JSON.stringify(secret)).toThrow(
+        "[@byo-oss/support] rawRelay secret must not contain whitespace",
+      );
+    }
+  });
 });
 
 describe("wrapsInbound", () => {
