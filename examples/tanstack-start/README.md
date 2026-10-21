@@ -24,7 +24,8 @@ press **Support** and create a ticket. Sign out, sign in as the agent
   Shared with `scripts/migrate.ts` and `scripts/seed.ts`, which run under plain Node.
 - `src/lib/auth.ts`: adds `tanstackStartCookies()` last, for server functions.
 - `src/lib/auth-client.ts`: `supportClient()`.
-- `src/routes/help.tsx`: `<SupportWidget client={authClient} />` for signed-in customers.
+- `src/routes/help.tsx`: `<SupportWidget client={authClient} ticketId={ticket} />` for signed-in customers.
+  `?ticket=<id>` opens that ticket's thread, which is where reply emails link (`ticketPath` in `auth-options.ts`).
 - `src/routes/inbox.tsx`: `<SupportInbox client={authClient} agents={agents} />`. `agents` are the
   staff organization's members, loaded by the server function in `src/lib/agents.ts`.
 - `src/routes/api/cron/support.ts`: the sweep (`sweepAll` from `@byo-oss/core`). Delayed replies are
