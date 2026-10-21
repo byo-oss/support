@@ -28,6 +28,7 @@ import { type DkimResolver, verifyAlignedDkim } from "./verify";
 export type InboundDropReason =
   | "too_large"
   | "unparseable"
+  | "virus"
   | "no_sender"
   | "loop"
   | "auto_reply"
@@ -62,6 +63,26 @@ const dropped = (reason: InboundDropReason): InboundResult => ({
   status: "dropped",
   reason,
 });
+
+/**
+ * Logs why a message was dropped, once per message: `warn`, or `info` for a
+ * duplicate (a relay's retry of a message already stored is routine). Only
+ * the reason and the sender's domain: no body, no address, no recipient (a
+ * `support+<token>` recipient carries the reply token).
+ */
+function logDrop(
+  rt: SupportRuntime,
+  reason: InboundDropReason,
+  senderDomain: string | null,
+): void {
+  const message = `[@byo-oss/support] dropped an inbound email: ${reason} (sender domain: ${senderDomain ?? "none"})`;
+  try {
+    if (reason === "duplicate") rt.opts.logger.info(message);
+    else rt.opts.logger.warn(message);
+  } catch {
+    // a broken logger must not turn a decided drop into a retry
+  }
+}
 
 function domainOf(address: string): string {
   return address.slice(address.lastIndexOf("@") + 1);
@@ -99,6 +120,24 @@ function isAutoReply(headers: Record<string, string>): boolean {
     headers["x-autoreply"] !== undefined ||
     headers["x-autorespond"] !== undefined
   );
+}
+
+/**
+ * The verdict SES adds on receipt (`X-SES-Spam-Verdict`,
+ * `X-SES-Virus-Verdict`: `PASS`, `FAIL`, `GRAY` or `PROCESSING_FAILED`),
+ * uppercased; null when absent. SES prepends its headers above everything
+ * the sender wrote, so only the first copy is read: a copy the sender added
+ * further down never overrides SES's. Without SES (scanning off, another
+ * relay) the first copy may be the sender's; only `FAIL` is acted on, so it
+ * can only make that sender's own message stricter.
+ */
+function sesVerdict(
+  headers: Record<string, string>,
+  name: "x-ses-spam-verdict" | "x-ses-virus-verdict",
+): string | null {
+  // parseMessage joins repeated headers with ", " in message order
+  const first = headers[name]?.split(",")[0]?.trim().toUpperCase();
+  return first || null;
 }
 
 /** The null return path `<>`, a `MAILER-DAEMON`/`postmaster` sender, or a delivery report. */
@@ -299,7 +338,7 @@ async function mayAppend(
   return false;
 }
 
-/** A system event row (no author, never counted by the caps). */
+/** A system event row (no author, never counted by the caps), on the email channel. */
 async function addEvent(
   rt: SupportRuntime,
   ticket: SupportTicketRow,
@@ -311,7 +350,8 @@ async function addEvent(
     authorType: "system",
     body: "",
     data,
-    channel: "web",
+    // every event written here was caused by an inbound email
+    channel: "email",
     verified: true,
     actorId: null,
   });
@@ -360,15 +400,17 @@ async function storeParts(
 }
 
 /**
- * Handles one raw inbound message: size cap, parse, drop rules (loop guard,
- * auto-replies, bounces, duplicate Message-ID incl. a unique-constraint
- * failure), caps, DKIM alignment, threading (reply token in a
+ * Handles one raw inbound message: size cap, parse, drop rules (SES virus
+ * verdict `FAIL`, loop guard, auto-replies, bounces, duplicate Message-ID
+ * incl. a unique-constraint failure), caps, DKIM alignment (an SES spam
+ * verdict `FAIL` counts as unverified), threading (reply token in a
  * `support+<token>@<replyDomain>` recipient, lowercased; then
  * `In-Reply-To`/`References`; then a new ticket when `newTickets`), merged
  * targets via `resolveMergedTicket`, the append rule, follow-up tickets for
  * closed ones (`followup_of` event), attachment parts through
  * `storeInboundPart` (writing an `attachment_dropped` event for each drop).
- * Never throws for a message it decided to drop.
+ * Never throws for a message it decided to drop, and logs each drop once
+ * through `opts.logger` (reason and sender domain only).
  *
  * Mail that threads but may not append (unverified, or not from the
  * requester) opens a new private, organization-less ticket and never links
@@ -386,26 +428,42 @@ export async function receiveEmail(
       "[@byo-oss/support] receiveEmail needs the inbound and email options",
     );
   }
-  if (raw.byteLength > inbound.maxBytes) return dropped("too_large");
+  let senderDomain: string | null = null;
+  const drop = (reason: InboundDropReason): InboundResult => {
+    logDrop(rt, reason, senderDomain);
+    return dropped(reason);
+  };
+  if (raw.byteLength > inbound.maxBytes) return drop("too_large");
 
   let parsed: ParsedMessage;
   try {
     parsed = await parseMessage(raw);
   } catch {
-    return dropped("unparseable");
+    return drop("unparseable");
   }
   const sender = parsed.from?.address;
-  if (!sender?.includes("@")) return dropped("no_sender");
-  if (isOwnAddress(sender, email)) return dropped("loop");
-  if (isAutoReply(parsed.headers)) return dropped("auto_reply");
-  if (isBounce(parsed, sender)) return dropped("bounce");
+  if (sender?.includes("@")) senderDomain = domainOf(sender);
+  // nothing of a message SES found a virus in is stored, parts included
+  if (sesVerdict(parsed.headers, "x-ses-virus-verdict") === "FAIL") {
+    return drop("virus");
+  }
+  if (!sender?.includes("@")) return drop("no_sender");
+  if (isOwnAddress(sender, email)) return drop("loop");
+  if (isAutoReply(parsed.headers)) return drop("auto_reply");
+  if (isBounce(parsed, sender)) return drop("bounce");
 
   const emailMessageId = await storedMessageId(parsed.messageId, raw);
-  if (await messageExists(rt, emailMessageId)) return dropped("duplicate");
+  if (await messageExists(rt, emailMessageId)) return drop("duplicate");
 
-  const verified = await verifyAlignedDkim(raw, domainOf(sender), {
-    resolver: deps.resolver,
-  });
+  // mail SES marked as spam counts as unverified whatever its DKIM says: it
+  // never appends to a ticket, never links to an account and falls under
+  // the unverified cap
+  const spam = sesVerdict(parsed.headers, "x-ses-spam-verdict") === "FAIL";
+  const verified =
+    !spam &&
+    (await verifyAlignedDkim(raw, domainOf(sender), {
+      resolver: deps.resolver,
+    }));
   const account = await findUserByEmail(rt.adapter, sender);
   // only verified mail from a verified account is that account's
   const linked = verified && account?.emailVerified ? account : null;
@@ -417,7 +475,7 @@ export async function receiveEmail(
     verified,
     since: new Date(now.getTime() - HOUR_MS),
   });
-  if (cap) return dropped(cap);
+  if (cap) return drop(cap);
 
   const thread = await findThread(rt, parsed, email.replyDomain);
   const target = thread ? await resolveMergedTicket(rt.adapter, thread) : null;
@@ -457,7 +515,7 @@ export async function receiveEmail(
         actorId: userId,
       }),
     );
-    if (!appended) return dropped("duplicate");
+    if (!appended) return drop("duplicate");
     await storeParts(rt, {
       ticket: appended.ticket,
       message: appended.message,
@@ -474,7 +532,7 @@ export async function receiveEmail(
   // a requester's reply to a closed ticket threads, so it opens its
   // follow-up even when newTickets is off
   const followup = target !== null && allowed;
-  if (!followup && !inbound.newTickets) return dropped("no_new_tickets");
+  if (!followup && !inbound.newTickets) return drop("no_new_tickets");
   const created = await orDuplicate(() =>
     createTicket(rt, {
       subject: parsed.subject.slice(0, SUPPORT_LIMITS.subject) || NO_SUBJECT,
@@ -490,7 +548,7 @@ export async function receiveEmail(
       actorId: userId,
     }),
   );
-  if (!created) return dropped("duplicate");
+  if (!created) return drop("duplicate");
   // a reply to a closed ticket from someone who could have appended to it
   if (followup && target) {
     await addEvent(rt, created.ticket, {

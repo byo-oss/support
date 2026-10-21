@@ -671,6 +671,48 @@ describe("status transitions", () => {
       expect(events).toHaveLength(1);
     });
 
+    it("records the channel given, web by default; addMessage passes its own", async () => {
+      const { auth, rt } = await setup();
+      const ticket = await seedTicket(auth, { status: "solved" });
+      const closed = await applyStatus(rt, {
+        ticket,
+        to: "closed",
+        actorId: null,
+        authorType: "system",
+      });
+      await applyStatus(rt, {
+        ticket: closed,
+        to: "open",
+        actorId: REQUESTER,
+        authorType: "customer",
+        channel: "email",
+      });
+      const [web, email] = await messagesOf(rt, ticket.id);
+      expect(web).toMatchObject({ data: { to: "closed" }, channel: "web" });
+      expect(email).toMatchObject({ data: { to: "open" }, channel: "email" });
+
+      for (const channel of ["web", "email"] as const) {
+        const pending = await seedTicket(auth, { status: "pending" });
+        await addMessage(rt, {
+          ticket: pending,
+          kind: "reply",
+          authorType: "customer",
+          userId: REQUESTER,
+          body: "ping",
+          channel,
+          verified: true,
+          actorId: REQUESTER,
+        });
+        const status = (await messagesOf(rt, pending.id)).find(
+          (m) => m.kind === "event",
+        );
+        expect(status).toMatchObject({
+          data: { type: "status", from: "pending", to: "open" },
+          channel,
+        });
+      }
+    });
+
     it("same status is a no-op: no write, no event row, no event", async () => {
       const { auth, rt, events } = await setup();
       const ticket = await seedTicket(auth, { status: "pending" });

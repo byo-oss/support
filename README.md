@@ -425,11 +425,24 @@ The endpoint is `POST <your auth base path>/support/inbound`, for example `https
 
 Grant `s3:ListBucket` as well as `s3:GetObject`. Without `ListBucket`, S3 reports a missing object as `AccessDenied` instead of `NoSuchKey`, so a message that is gone looks like a failure and the relay retries it forever. With it, a missing object answers 404 and is not retried; any other S3 error answers 502 and is.
 
+One Wraps inbound stack emits an `email.received` event for every domain it receives mail for, so filter the EventBridge rule behind the API destination on `detail.receivingDomain` (your `replyDomain`). Without the filter, mail for every domain the stack receives reaches support and opens tickets.
+
+```json
+{
+  "source": ["wraps.inbound"],
+  "detail-type": ["email.received"],
+  "detail": { "receivingDomain": ["support.acme.com"] }
+}
+```
+
+Matching is exact and case-sensitive, and Wraps takes `receivingDomain` from the message's first `To` address as written, so mail that reaches support only by Cc or Bcc, or with another address first in `To`, carries another domain (or none) and the rule skips it. Use `[{ "equals-ignore-case": "support.acme.com" }]` to match any case, and list your public support address's domain too if the same stack receives it.
+
 What the endpoint does with a message:
 
-- **Answers 202** for every message it took, dropped and duplicate ones included, so the relay stops retrying. A source's `{ reject: status }` is answered with that status, and a source that throws is answered 502 (retry). Without `inbound` the endpoint answers 404 `INBOUND_NOT_CONFIGURED`.
-- **Drops** mail from your own `from` address or any address at `replyDomain` (loop guard), auto-replies (`Auto-Submitted` other than `no`, `X-Auto-Response-Suppress`, `Precedence: bulk|junk|auto_reply`), bounces (empty return path, `MAILER-DAEMON`, `postmaster`, delivery reports), a Message-ID it already stored, mail with no sender, unparseable mail, and anything past the caps below.
-- **Verifies** the sender. A message is `verified` when it carries a passing DKIM signature aligned with the From domain, whether or not the domain publishes DMARC. The relay's own headers are ignored. The check reads DNS, so it needs Node's `dns` module: it does not run on edge runtimes.
+- **Answers 202** for every message it took, dropped and duplicate ones included, so the relay stops retrying. Each drop is logged once through better-auth's logger, at `warn` (a duplicate, a relay's retry, at `info`), with the reason and the sender's domain only: `[@byo-oss/support] dropped an inbound email: auto_reply (sender domain: customer.com)`. better-auth logs `warn` by default; set its `logger: { level: "info" }` to see duplicates too. A source's `{ reject: status }` is answered with that status, and a source that throws is answered 502 (retry). Without `inbound` the endpoint answers 404 `INBOUND_NOT_CONFIGURED`.
+- **Drops** mail SES found a virus in (below), mail from your own `from` address or any address at `replyDomain` (loop guard), auto-replies (`Auto-Submitted` other than `no`, `X-Auto-Response-Suppress`, `Precedence: bulk|junk|auto_reply`), bounces (empty return path, `MAILER-DAEMON`, `postmaster`, delivery reports), a Message-ID it already stored, mail with no sender, unparseable mail, and anything past the caps below.
+- **Verifies** the sender. A message is `verified` when it carries a passing DKIM signature aligned with the From domain, whether or not the domain publishes DMARC. The relay's own authentication headers (`Authentication-Results` and the like) are ignored. The check reads DNS, so it needs Node's `dns` module: it does not run on edge runtimes.
+- **Spam and virus verdicts.** SES scans the mail it receives and adds `X-SES-Spam-Verdict` and `X-SES-Virus-Verdict` at the top of the message, above every header the sender wrote. Support reads them from the raw message, so the rule is the same for `wrapsInbound` and for a `rawRelay` fed from SES (Wraps' `spamVerdict` and `virusVerdict` event fields come from the same headers and aren't read). Virus `FAIL`: the message is dropped and nothing of it is stored, attachments included. Spam `FAIL`: the message counts as unverified whatever its DKIM says, so it never appends to a ticket, never links to an account, counts toward `maxUnverifiedPerHour` and opens a new ticket only under `newTickets`. `GRAY`, `PROCESSING_FAILED` or no verdict change nothing. Only the first copy of each header is read, which is SES's, so a copy the sender wrote further down can't hide a `FAIL`. Without SES scanning (turned off in the receipt rule, or another relay) a copy present is the sender's own; since only `FAIL` acts, it can only make that sender's message stricter.
 - **Caps.** `maxPerSenderPerHour` counts verified email replies from that sender; `maxUnverifiedPerHour` counts every unverified message, so forged mail never uses up a real customer's cap.
 - **Threads** by the reply token in a `support+<token>@<replyDomain>` recipient, then by `In-Reply-To` and `References` matching a stored Message-ID. Never by subject. Merged tickets resolve to their target.
 - **Appends** only verified mail from the requester (an account's verified email, or the stored `requesterEmail`), or, on an organization-shared ticket, from a member whose verified account has that address. Anything else opens a new private ticket with no organization, never linked to the thread.
@@ -755,8 +768,8 @@ These tables are a public contract: a change that breaks reading existing rows i
 | `data` | json, optional | On events: `{ type: "status" \| "assignee" \| "priority" \| "merged" \| "attachment_dropped" \| "followup_of", from?, to? }` |
 | `mentions` | json, optional | `string[]` of agent user ids, on agent messages |
 | `emailMessageId` | string, unique, optional | The RFC 5322 Message-ID of inbound mail, and of outbound mail when the mailer reports it |
-| `channel` | string | `web` or `email` |
-| `verified` | boolean | The inbound DKIM result; `true` for in-app messages |
+| `channel` | string | `web` or `email`. On events, what caused them: a status change from an email reply, and `attachment_dropped` and `followup_of` rows, are `email` |
+| `verified` | boolean | The inbound DKIM result (`false` when SES marked the mail as spam); `true` for in-app messages |
 | `createdAt` | date | |
 
 **`supportCannedReply`**: staff-wide saved replies.

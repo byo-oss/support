@@ -301,6 +301,7 @@ export async function addMessage(
       to,
       actorId: input.actorId,
       authorType,
+      channel: input.channel,
     });
   }
 
@@ -353,7 +354,9 @@ export async function addMessage(
 /**
  * Sets `status` (and `solvedAt` when it becomes `solved`, null when it
  * becomes `open` or `pending`), writes a `status` event row
- * (`{ type: "status", from, to }`, `authorType` as given) and emits
+ * (`{ type: "status", from, to }`, `authorType` and `channel` as given,
+ * `channel` defaulting to `"web"`; `addMessage` passes its message's, so an
+ * email reply's status change is on `email`) and emits
  * `support.ticket.status_changed`. Same status: no write, no event. Does not
  * check who may make the change.
  */
@@ -364,6 +367,8 @@ export async function applyStatus(
     to: TicketStatus;
     actorId: string | null;
     authorType: AuthorType;
+    /** What caused the change. @default "web" */
+    channel?: TicketChannel;
   },
 ): Promise<SupportTicketRow> {
   const { ticket, to } = input;
@@ -393,7 +398,7 @@ export async function applyStatus(
       data: { type: "status", from, to },
       mentions: null,
       emailMessageId: null,
-      channel: "web",
+      channel: input.channel ?? "web",
       verified: true,
       createdAt: now,
     },

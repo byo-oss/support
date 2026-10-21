@@ -303,10 +303,14 @@ export type ResolvedSupportOptions = {
   raw: SupportOptions;
   /**
    * Where misuse found at request time is logged (a `staffOrganizationId`
-   * function that throws or returns a non-string). `init` sets it to
+   * function that throws or returns a non-string), and why `receiveEmail`
+   * dropped a message (`warn`; `info` for a duplicate). `init` sets it to
    * better-auth's `context.logger`; `console` until then.
    */
-  logger: SupportLogger;
+  logger: SupportLogger & {
+    warn: (message: string, ...args: unknown[]) => void;
+    info: (message: string, ...args: unknown[]) => void;
+  };
 };
 
 /**

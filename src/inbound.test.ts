@@ -202,27 +202,46 @@ function fakeSource(): SupportInboundSource & { fail: boolean } {
   };
 }
 
+type LogLine = { level: string; message: string };
+
 async function setup(
   inbound: Partial<SupportInboundOptions> = {},
   extra: Partial<SupportOptions> = {},
+  log: { throws?: boolean } = {},
 ) {
   const events: ByoEvent[] = [];
+  // every level better-auth's logger writes, kept instead of printed
+  const logs: LogLine[] = [];
   const source = fakeSource();
-  const auth = createTestAuth({
-    staffOrganizationId: STAFF_ORG_ID,
-    mailer: memoryMailer(),
-    email: {
-      from: SUPPORT_FROM,
-      replyDomain: REPLY_DOMAIN,
-      appUrl: "https://app.test",
+  const auth = createTestAuth(
+    {
+      staffOrganizationId: STAFF_ORG_ID,
+      mailer: memoryMailer(),
+      email: {
+        from: SUPPORT_FROM,
+        replyDomain: REPLY_DOMAIN,
+        appUrl: "https://app.test",
+      },
+      inbound: { source, ...inbound },
+      onEvent: (event) => void events.push(event),
+      ...extra,
     },
-    inbound: { source, ...inbound },
-    onEvent: (event) => void events.push(event),
-    ...extra,
-  });
+    {
+      authOptions: {
+        logger: {
+          level: "debug",
+          log: (level, message) => {
+            if (log.throws) throw new Error("logger down");
+            logs.push({ level, message });
+          },
+        },
+      },
+    },
+  );
   const world = await seedSupportWorld(auth);
   const rt = await authRuntime(auth, "inbound.test");
   events.length = 0;
+  logs.length = 0;
 
   const receive = (raw: Uint8Array, deps: ReceiveEmailDeps = {}) =>
     receiveEmail(rt, raw, { resolver, ...deps });
@@ -237,7 +256,7 @@ async function setup(
         body: raw as BodyInit,
       }),
     );
-  return { auth, rt, world, events, source, receive, post };
+  return { auth, rt, world, events, logs, source, receive, post };
 }
 
 async function tickets(rt: SupportRuntime): Promise<SupportTicketRow[]> {
@@ -312,6 +331,41 @@ async function webTicket(
 
 const tokenAddress = (ticket: SupportTicketRow) =>
   `support+${ticket.replyToken}@${REPLY_DOMAIN}`;
+
+/**
+ * The message as SES stores it on receipt: its verdict headers prepended
+ * above everything the sender wrote (and above the DKIM signature, which
+ * doesn't cover them), as in a real SES inbound header block.
+ */
+function sesReceived(
+  raw: Uint8Array,
+  verdicts: { spam?: string; virus?: string },
+): Uint8Array {
+  const lines = [
+    ...(verdicts.spam ? [`X-SES-Spam-Verdict: ${verdicts.spam}`] : []),
+    ...(verdicts.virus ? [`X-SES-Virus-Verdict: ${verdicts.virus}`] : []),
+  ];
+  const head = lines.map((line) => `${line}\r\n`).join("");
+  return new Uint8Array([...bytes(head), ...raw]);
+}
+
+/** The support plugin's drop log lines. */
+const dropLogs = (logs: LogLine[]) =>
+  logs.filter((line) => line.message.includes("dropped an inbound email"));
+
+/** A ticket of the verified customer, waiting on the customer (`pending`). */
+async function pendingTicket(
+  rt: SupportRuntime,
+  owner: { user: { id: string } },
+) {
+  const ticket = await webTicket(rt, owner);
+  await rt.adapter.update({
+    model: "supportTicket",
+    where: [{ field: "id", value: ticket.id }],
+    update: { status: "pending" },
+  });
+  return { ...ticket, status: "pending" as const };
+}
 
 const mockedStore = vi.mocked(storeInboundPart);
 const mockedResolve = vi.mocked(resolveMergedTicket);
@@ -638,6 +692,28 @@ describe("receiveEmail: threading and the append rule", () => {
     ).toMatchObject({ actorId: world.customer.user.id });
   });
 
+  it("records the status change an email reply causes on the email channel", async () => {
+    const { rt, receive, world } = await setup();
+    const ticket = await pendingTicket(rt, world.customer);
+    expectAppended(
+      await receive(
+        await signed({
+          template: "reply",
+          from: world.customer.user.email,
+          to: tokenAddress(ticket),
+        }),
+      ),
+    );
+    const status = (await messagesOf(rt, ticket.id)).find(
+      (message) => message.kind === "event",
+    );
+    expect(status).toMatchObject({
+      data: { type: "status", from: "pending", to: "open" },
+      authorType: "customer",
+      channel: "email",
+    });
+  });
+
   it("threads by In-Reply-To, then by References", async () => {
     const { rt, receive } = await setup();
     const first = expectCreated(
@@ -807,10 +883,12 @@ describe("receiveEmail: threading and the append rule", () => {
     expect(await ticketById(rt, closed.id)).toMatchObject({ status: "closed" });
     expect(await messagesOf(rt, closed.id)).toHaveLength(1);
     const followup = await messagesOf(rt, result.ticketId);
-    expect(followup.find((message) => message.kind === "event")?.data).toEqual({
+    const followupEvent = followup.find((message) => message.kind === "event");
+    expect(followupEvent?.data).toEqual({
       type: "followup_of",
       from: closed.id,
     });
+    expect(followupEvent?.channel).toBe("email");
     expect(await ticketById(rt, result.ticketId)).toMatchObject({
       userId: world.customer.user.id,
       status: "open",
@@ -1029,6 +1107,172 @@ describe("receiveEmail: caps", () => {
   });
 });
 
+describe("receiveEmail: SES spam and virus verdicts", () => {
+  it("drops a message SES found a virus in, storing nothing, parts included", async () => {
+    const { rt, receive, world, logs } = await setup();
+    const ticket = await pendingTicket(rt, world.customer);
+    const infected = sesReceived(
+      await signed({
+        template: "attachment",
+        from: world.customer.user.email,
+        to: tokenAddress(ticket),
+      }),
+      { spam: "PASS", virus: "FAIL" },
+    );
+    expect(await receive(infected)).toEqual({
+      status: "dropped",
+      reason: "virus",
+    });
+    expect(mockedStore).not.toHaveBeenCalled();
+    expect(await tickets(rt)).toHaveLength(1);
+    expect(await messagesOf(rt, ticket.id)).toHaveLength(1);
+    expect((await ticketById(rt, ticket.id)).status).toBe("pending");
+    expect(dropLogs(logs)).toEqual([
+      {
+        level: "warn",
+        message:
+          "[@byo-oss/support] dropped an inbound email: virus (sender domain: acme.test)",
+      },
+    ]);
+    // a new ticket isn't opened for one either
+    expect(
+      await receive(
+        sesReceived(await signed({ template: "attachment" }), {
+          virus: "FAIL",
+        }),
+      ),
+    ).toEqual({ status: "dropped", reason: "virus" });
+    expect(await tickets(rt)).toHaveLength(1);
+  });
+
+  it("treats spam FAIL as unverified: never appended, never linked to the account", async () => {
+    const { rt, receive, world } = await setup();
+    const ticket = await pendingTicket(rt, world.customer);
+    // the verified requester, DKIM-signed, by reply token: without the
+    // verdict this appends (see the GRAY test)
+    const result = expectCreated(
+      await receive(
+        sesReceived(
+          await signed({
+            template: "reply",
+            from: world.customer.user.email,
+            to: tokenAddress(ticket),
+          }),
+          { spam: "FAIL", virus: "PASS" },
+        ),
+      ),
+    );
+    expect(result.ticketId).not.toBe(ticket.id);
+    expect(await messagesOf(rt, ticket.id)).toHaveLength(1);
+    expect((await ticketById(rt, ticket.id)).status).toBe("pending");
+    expect(await ticketById(rt, result.ticketId)).toMatchObject({
+      verified: false,
+      userId: null,
+      requesterEmail: world.customer.user.email,
+      organizationId: null,
+      visibility: "private",
+    });
+    const [message] = await messagesOf(rt, result.ticketId);
+    expect(message).toMatchObject({ verified: false, userId: null });
+  });
+
+  it("puts spam FAIL mail under the unverified rules: cap and newTickets", async () => {
+    const capped = await setup({
+      maxUnverifiedPerHour: 1,
+      maxPerSenderPerHour: 100,
+    });
+    const spam = async (from: string) =>
+      sesReceived(await signed({ from }), { spam: "FAIL" });
+    expectCreated(await capped.receive(await spam("a@acme.test")));
+    expect(await capped.receive(await spam("b@other.test"))).toEqual({
+      status: "dropped",
+      reason: "unverified_cap",
+    });
+    // verified mail isn't held back by it
+    expectCreated(await capped.receive(await signed()));
+
+    const closedInbox = await setup({ newTickets: false });
+    expect(await closedInbox.receive(await spam("a@acme.test"))).toEqual({
+      status: "dropped",
+      reason: "no_new_tickets",
+    });
+  });
+
+  it("changes nothing for GRAY, PROCESSING_FAILED or no verdict", async () => {
+    const { rt, receive, world } = await setup();
+    for (const verdict of ["GRAY", "PROCESSING_FAILED", undefined]) {
+      const ticket = await pendingTicket(rt, world.customer);
+      const result = expectAppended(
+        await receive(
+          sesReceived(
+            await signed({
+              template: "reply",
+              from: world.customer.user.email,
+              to: tokenAddress(ticket),
+            }),
+            { spam: verdict, virus: verdict },
+          ),
+        ),
+      );
+      expect(result.ticketId).toBe(ticket.id);
+      const reply = (await messagesOf(rt, ticket.id)).find(
+        (message) => message.id === result.messageId,
+      );
+      expect(reply).toMatchObject({
+        verified: true,
+        userId: world.customer.user.id,
+      });
+    }
+  });
+
+  it("reads only SES's copy, the first: a copy the sender added further down never counts", async () => {
+    const { rt, receive, world } = await setup();
+    // the sender's own FAIL copies under SES's PASS: SES's wins, it appends
+    const ticket = await pendingTicket(rt, world.customer);
+    expectAppended(
+      await receive(
+        sesReceived(
+          await signed({
+            template: "reply",
+            from: world.customer.user.email,
+            to: tokenAddress(ticket),
+            headers: ["X-SES-Spam-Verdict: FAIL", "X-SES-Virus-Verdict: FAIL"],
+          }),
+          { spam: "PASS", virus: "PASS" },
+        ),
+      ),
+    );
+
+    // a forged PASS under SES's FAIL hides nothing
+    expect(
+      await receive(
+        sesReceived(
+          await signed({
+            template: "attachment",
+            headers: ["X-SES-Virus-Verdict: PASS"],
+          }),
+          { virus: "FAIL" },
+        ),
+      ),
+    ).toEqual({ status: "dropped", reason: "virus" });
+    const other = await pendingTicket(rt, world.customer);
+    expectCreated(
+      await receive(
+        sesReceived(
+          await signed({
+            template: "reply",
+            from: world.customer.user.email,
+            to: tokenAddress(other),
+            headers: ["X-SES-Spam-Verdict: PASS"],
+          }),
+          { spam: "FAIL" },
+        ),
+      ),
+    );
+    expect(await messagesOf(rt, other.id)).toHaveLength(1);
+  });
+});
+
 describe("receiveEmail: attachment parts", () => {
   it("writes an attachment_dropped event per part when there is no storage", async () => {
     const { rt, receive } = await setup();
@@ -1052,6 +1296,7 @@ describe("receiveEmail: attachment parts", () => {
       authorType: "system",
       userId: null,
       body: "",
+      channel: "email",
     });
   });
 
@@ -1205,6 +1450,94 @@ describe("receiveSupportEmail (POST /support/inbound)", () => {
     const res = await post(unsigned({ template: "auto-reply" }));
     expect(res.status).toBe(202);
     expect(await tickets(rt)).toHaveLength(0);
+  });
+
+  it("logs each drop once at warn: the reason and the sender domain, no address or body", async () => {
+    const { rt, post, logs } = await setup();
+    const res = await post(
+      unsigned({
+        template: "auto-reply",
+        from: "alice@customer.test",
+        body: "I am out of the office until Monday.",
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await post(unsigned({ from: SUPPORT_TO }))).toHaveProperty(
+      "status",
+      202,
+    );
+    expect(
+      await post(unsigned({ from: "MAILER-DAEMON@mx.other.test" })),
+    ).toHaveProperty("status", 202);
+    expect(dropLogs(logs)).toEqual([
+      {
+        level: "warn",
+        message:
+          "[@byo-oss/support] dropped an inbound email: auto_reply (sender domain: customer.test)",
+      },
+      {
+        level: "warn",
+        message:
+          "[@byo-oss/support] dropped an inbound email: loop (sender domain: help.test)",
+      },
+      {
+        level: "warn",
+        message:
+          "[@byo-oss/support] dropped an inbound email: bounce (sender domain: mx.other.test)",
+      },
+    ]);
+    const all = logs.map((line) => line.message).join("\n");
+    expect(all).not.toContain("alice@");
+    expect(all).not.toContain("out of the office");
+    expect(await tickets(rt)).toHaveLength(0);
+  });
+
+  it("logs nothing at warn for created and appended mail; a duplicate only at info", async () => {
+    const { rt, post, world, logs } = await setup();
+    const ticket = await pendingTicket(rt, world.customer);
+    const created = await signed({ messageId: "<new@customer.test>" });
+    expect((await post(created)).status).toBe(202);
+    expect(
+      (
+        await post(
+          await signed({
+            template: "reply",
+            from: world.customer.user.email,
+            to: tokenAddress(ticket),
+          }),
+        )
+      ).status,
+    ).toBe(202);
+    expect(await tickets(rt)).toHaveLength(2);
+    expect(await messagesOf(rt, ticket.id)).toHaveLength(3);
+    expect(logs.filter((line) => line.level === "warn")).toEqual([]);
+    expect(logs.filter((line) => line.level === "error")).toEqual([]);
+
+    // the relay's retry of a stored message
+    expect((await post(created)).status).toBe(202);
+    expect(logs.filter((line) => line.level === "warn")).toEqual([]);
+    expect(dropLogs(logs)).toEqual([
+      {
+        level: "info",
+        message:
+          "[@byo-oss/support] dropped an inbound email: duplicate (sender domain: customer.test)",
+      },
+    ]);
+  });
+
+  it("answers 202 for a virus drop, and still 202 when the logger throws", async () => {
+    // better-auth logs while it boots: break the logger after that
+    const logger = { throws: false };
+    const { rt, post } = await setup({}, {}, logger);
+    logger.throws = true;
+    const res = await post(
+      sesReceived(await signed({ template: "attachment" }), { virus: "FAIL" }),
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(await tickets(rt)).toHaveLength(0);
+    expect(mockedStore).not.toHaveBeenCalled();
   });
 
   it("passes the source's reject status through (bad relay secret: 401)", async () => {
