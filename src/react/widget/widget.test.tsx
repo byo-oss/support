@@ -601,6 +601,48 @@ describe("SupportWidget thread", () => {
     expect(custom.textContent).toContain("m1");
     expect(within(custom).getByText("Body m1")).toBeTruthy();
   });
+
+  it("routes same-origin links in a message through onNavigate", async () => {
+    const onNavigate = vi.fn();
+    const href = `${window.location.origin}/orders/9?x=1`;
+    renderWidget(
+      { detail: { messages: [message("m1", { body: `See ${href} please` })] } },
+      { onNavigate },
+    );
+    await openThread();
+    const link = screen.getByRole("link", { name: href });
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(fireEvent.click(link)).toBe(false);
+    expect(onNavigate).toHaveBeenCalledWith("/orders/9?x=1");
+  });
+
+  it("leaves other-origin links to the browser", async () => {
+    const onNavigate = vi.fn();
+    renderWidget(
+      {
+        detail: {
+          messages: [
+            message("m1", { body: "See https://example.org/help please" }),
+          ],
+        },
+      },
+      { onNavigate },
+    );
+    await openThread();
+    const link = screen.getByRole("link", { name: "https://example.org/help" });
+    // record whether the widget claimed the click, then stop happy-dom from
+    // following the link
+    let claimed: boolean | undefined;
+    const stop = (event: Event) => {
+      claimed = event.defaultPrevented;
+      event.preventDefault();
+    };
+    document.addEventListener("click", stop);
+    fireEvent.click(link);
+    document.removeEventListener("click", stop);
+    expect(claimed).toBe(false);
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
 });
 
 describe("SupportWidget attachments", () => {

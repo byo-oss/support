@@ -45,6 +45,8 @@ type View =
   | { name: "new" }
   | { name: "thread"; ticketId: string };
 
+const defaultNavigate = (href: string) => window.location.assign(href);
+
 const DEFAULT_BUTTON_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing}`;
 
 /**
@@ -57,6 +59,7 @@ const DEFAULT_BUTTON_CLASS = `relative inline-flex items-center gap-2 rounded-md
  */
 export function SupportWidget({
   client,
+  onNavigate,
   renderMessage,
   organizationId,
   pollInterval,
@@ -181,6 +184,7 @@ export function SupportWidget({
               labels={labels}
               attachmentsEnabled={tickets.features.attachments}
               pollInterval={pollInterval}
+              onNavigate={onNavigate ?? defaultNavigate}
               renderMessage={renderMessage}
               onChanged={refresh}
               onBack={backToList}

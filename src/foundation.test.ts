@@ -212,6 +212,84 @@ describe("options", () => {
     );
   });
 
+  it("refuses inbound without source", () => {
+    expect(
+      boot({ mailer: memoryMailer(), email, inbound: {} as never }),
+    ).toThrow(/^\[@byo-oss\/support\] inbound needs source/);
+  });
+
+  it("refuses a replyDomain that is an address", () => {
+    expect(
+      boot({
+        mailer: memoryMailer(),
+        email: { ...email, replyDomain: "support@reply.acme.test" },
+      }),
+    ).toThrow(
+      /^\[@byo-oss\/support\] email.replyDomain is a domain, not an address/,
+    );
+  });
+
+  it.each([
+    ["pageSize", () => ({ pageSize: 1.5 }), 1],
+    ["pageSize", () => ({ pageSize: 0 }), 1],
+    ["autoCloseAfter", () => ({ autoCloseAfter: -1 }), 0],
+    ["autoCloseAfter", () => ({ autoCloseAfter: 0.5 }), 0],
+    ["maxAttempts", () => ({ maxAttempts: 0 }), 1],
+    ["maxAttempts", () => ({ maxAttempts: 2.5 }), 1],
+    ["batchSize", () => ({ batchSize: 0 }), 1],
+    ["batchSize", () => ({ batchSize: Number.NaN }), 1],
+    ["leaseMs", () => ({ leaseMs: 0 }), 1],
+    ["leaseMs", () => ({ leaseMs: 1.5 }), 1],
+    [
+      "inbound.maxPerSenderPerHour",
+      () => ({ inbound: { source: inboundSource, maxPerSenderPerHour: -1 } }),
+      0,
+    ],
+    [
+      "inbound.maxUnverifiedPerHour",
+      () => ({
+        inbound: { source: inboundSource, maxUnverifiedPerHour: 1.5 },
+      }),
+      0,
+    ],
+    [
+      "inbound.maxBytes",
+      () => ({ inbound: { source: inboundSource, maxBytes: 0 } }),
+      1,
+    ],
+    [
+      "attachments.maxBytes",
+      () => ({ attachments: { storage, maxBytes: 0 } }),
+      1,
+    ],
+    [
+      "attachments.maxBytes",
+      () => ({ attachments: { storage, maxBytes: 1.5 } }),
+      1,
+    ],
+  ])("refuses a bad %s", (name, make, min) => {
+    expect(boot({ mailer: memoryMailer(), email, ...make() } as never)).toThrow(
+      new RegExp(
+        `^\\[@byo-oss/support\\] ${name.replace(".", "\\.")} must be an integer of at least ${min}`,
+      ),
+    );
+  });
+
+  it("accepts zero where zero is allowed", () => {
+    expect(
+      boot({
+        mailer: memoryMailer(),
+        email,
+        autoCloseAfter: 0,
+        inbound: {
+          source: inboundSource,
+          maxPerSenderPerHour: 0,
+          maxUnverifiedPerHour: 0,
+        },
+      }),
+    ).not.toThrow();
+  });
+
   it("refuses attachments without storage", () => {
     expect(boot({ attachments: {} as never })).toThrow(
       /^\[@byo-oss\/support\] attachments needs storage/,

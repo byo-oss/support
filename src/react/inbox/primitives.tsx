@@ -16,7 +16,7 @@ const BUTTON_DEFAULT = "bg-background text-foreground hover:bg-accent";
 const BUTTON_PRIMARY =
   "border-transparent bg-primary text-primary-foreground hover:bg-primary/90";
 const BUTTON_DANGER =
-  "border-transparent bg-destructive text-white hover:bg-destructive/90";
+  "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/90";
 
 export type ButtonVariant = "default" | "primary" | "danger";
 

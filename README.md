@@ -37,7 +37,7 @@ The `Mailer` type comes from [`@byo-oss/mailer`](https://github.com/byo-oss/mail
 
 Five steps give you customers opening and following tickets (in-app, with polling) and agents working one queue: reply or leave a note, set status, priority, assignee and tags, in bulk. Email, inbound mail and attachments are [add-ons](#email-replies) further down.
 
-1. **Add the plugins.** `organization()` must come before `support()`: migrations create tables in plugin order, and `supportTicket` references `organization`. Create one organization for your team (the staff organization) and pass its id:
+1. **Add the plugins.** `organization()` must come before `support()`: migrations create tables in plugin order, and `supportTicket` references `organization`. Create one organization for your team (the staff organization; see [Seed the staff organization](#seed-the-staff-organization)) and pass its id:
 
    ```ts
    // lib/auth.ts
@@ -87,6 +87,16 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    npx @better-auth/cli migrate   # or: generate, for drizzle/prisma
    ```
 
+   If your framework's auth config can't be loaded by the CLI, run the same migration from code with `getMigrations` from `better-auth/db/migration`:
+
+   ```ts
+   import { getMigrations } from "better-auth/db/migration";
+   import { auth } from "./lib/auth";
+
+   const { runMigrations } = await getMigrations(auth.options);
+   await runMigrations();
+   ```
+
    It adds `supportTicket`, `supportCounter`, `supportTicketTag`, `supportMessage` and `supportCannedReply`, plus `supportDelivery` once you set `mailer` and `supportAttachment` once you set `attachments` (run it again after you turn those on). Nothing is added to `user`, `organization` or `member`.
 
 4. **Add the client plugin:**
@@ -128,9 +138,17 @@ Five steps give you customers opening and following tickets (in-app, with pollin
    }
    ```
 
+   `onNavigate` takes your router: `router.push(href)` as above, or `navigate({ href })` with TanStack Router. Without it, links to your app inside messages use `location.assign`. Build `agents` on the server from the staff organization's members: `auth.api.getFullOrganization({ headers, query: { organizationId: staffOrganizationId } })`, mapped to `{ id, name, image }[]` (`member.userId`, `member.user.name`, `member.user.image`).
+
    Tailwind v4 skips `node_modules` when it scans for classes, so point it at the package or some classes won't be generated (see [Tailwind](#tailwind)). Both components poll every 15 seconds, paused while the tab is hidden, and every string has a `labels` override.
 
 Server code can open a ticket without the widget too: `await auth.api.createSupportTicket({ headers, body: { subject, body } })`.
+
+For a complete, runnable wiring, see the example app in [`examples/tanstack-start`](examples/tanstack-start): TanStack Start with better-auth on SQLite and an end-to-end suite. Run it with `pnpm install`, `pnpm migrate`, `pnpm seed` and `pnpm dev` from that directory (Node 22.13 or newer); its README has the details and the sign-ins.
+
+## For coding agents
+
+[`AGENTS.md`](AGENTS.md) has the install steps, rules and repo conventions, and [`llms.txt`](llms.txt) is the full usage reference. The same setup, with a check after each step, ships as a skill: [`skills/support-setup/SKILL.md`](skills/support-setup/SKILL.md).
 
 ## Options
 
@@ -169,7 +187,28 @@ Server code can open a ticket without the widget too: `await auth.api.createSupp
 | `pageSize` | number | `25` | Tickets per list page, 1 to 50 |
 | `schema` | | | Rename tables and fields |
 
-Boot validation throws a `[@byo-oss/support] …` error for: `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
+Boot validation throws a `[@byo-oss/support] …` error for: `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, an option that must be a whole number but isn't (or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`), and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
+
+### Seed the staff organization
+
+better-auth's `createOrganization` can't set an id, so to give the staff organization a fixed id (to keep in config) create it through the adapter, plus a `member` row that makes someone its owner. Run it once, for example from a seed script:
+
+```ts
+const ctx = await auth.$context;
+const staffOrganizationId = "staff"; // what you pass as staffOrganizationId
+
+await ctx.adapter.create({
+  model: "organization",
+  forceAllowId: true,
+  data: { id: staffOrganizationId, name: "Support team", slug: "support-team", createdAt: new Date() },
+});
+await ctx.adapter.create({
+  model: "member",
+  data: { organizationId: staffOrganizationId, userId: ownerUserId, role: "owner", createdAt: new Date() },
+});
+```
+
+The owner role has every `support` action once step 2 is done. The other route is to create the organization the normal way, from your admin UI or `auth.api.createOrganization`, and put the id it gets in `SUPPORT_STAFF_ORGANIZATION_ID`.
 
 ## Access
 
@@ -735,7 +774,9 @@ Tailwind v4 skips `node_modules` when it scans for classes, so point it at the p
 @source "../node_modules/@byo-oss/support/dist"; /* path relative to this CSS file */
 ```
 
-The components use shadcn CSS variables (`bg-background`, `text-foreground`, `border`, `bg-accent`, `text-muted-foreground`), with no UI runtime dependencies and no shadcn required. Pass `className` for the root and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts.
+The components are styled with Tailwind classes only: without Tailwind they render unstyled (they still work).
+
+The components use shadcn CSS variables (`bg-background`, `text-foreground`, `border`, `bg-accent`, `text-muted-foreground`, `bg-destructive`, `text-destructive-foreground`), with no UI runtime dependencies and no shadcn required. Pass `className` for the root and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName` and `buttonClassName` (on the inbox, `queueClassName` instead of `listClassName`) for the parts.
 
 ## License
 

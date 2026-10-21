@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
   useEffect,
   useId,
@@ -34,6 +35,8 @@ export type ThreadViewProps = {
   /** From the ticket list response (`features.attachments`). */
   attachmentsEnabled: boolean;
   pollInterval: number | undefined;
+  /** Same-origin links in a message body go through this. */
+  onNavigate: (href: string) => void;
   renderMessage:
     | ((message: WireCustomerMessage, fallback: ReactNode) => ReactNode)
     | undefined;
@@ -54,6 +57,7 @@ export function ThreadView({
   labels,
   attachmentsEnabled,
   pollInterval,
+  onNavigate,
   renderMessage,
   onChanged,
   onBack,
@@ -188,6 +192,7 @@ export function ThreadView({
                   attachments={byMessage.get(message.id) ?? []}
                   labels={labels}
                   onPresent={present}
+                  onNavigate={onNavigate}
                 />
               );
               return (
@@ -319,10 +324,12 @@ function MessageBody({
   attachments,
   labels,
   onPresent,
+  onNavigate,
 }: {
   message: WireCustomerMessage;
   attachments: WireCustomerAttachment[];
   labels: WidgetLabels;
+  onNavigate: (href: string) => void;
   onPresent: (
     attachment: WireCustomerAttachment,
     mode: "open" | "download",
@@ -349,7 +356,9 @@ function MessageBody({
           {labels.relativeTime(message.createdAt)}
         </span>
       </div>
-      <p className="mt-1 whitespace-pre-wrap break-words">{message.body}</p>
+      <p className="mt-1 whitespace-pre-wrap break-words">
+        {renderBody(message.body, onNavigate)}
+      </p>
       {attachments.length > 0 ? (
         <ul
           aria-label={labels.attachments}
@@ -383,6 +392,40 @@ function MessageBody({
         </ul>
       ) : null}
     </>
+  );
+}
+
+/** Links in a body; same-origin ones route through `onNavigate`. */
+function renderBody(
+  text: string,
+  onNavigate: (href: string) => void,
+): ReactNode {
+  const linkClick = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+    try {
+      const url = new URL(href, window.location.href);
+      if (url.origin !== window.location.origin) return;
+      event.preventDefault();
+      onNavigate(`${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      // not a URL we can route; the browser handles it
+    }
+  };
+  return text.split(/(https?:\/\/[^\s<>"']+)/g).map((part, index) =>
+    index % 2 === 1 ? (
+      <a
+        // biome-ignore lint/suspicious/noArrayIndexKey: parts have no identity
+        key={index}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        onClick={(event) => linkClick(event, part)}
+        className="underline"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    ),
   );
 }
 
