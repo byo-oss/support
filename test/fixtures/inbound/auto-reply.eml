@@ -1,0 +1,12 @@
+From: {{fromName}} <{{from}}>
+To: {{to}}
+Subject: Automatic reply: {{subject}}
+Message-ID: {{messageId}}
+Date: Tue, 20 Oct 2026 09:31:00 +0000
+MIME-Version: 1.0
+Auto-Submitted: auto-replied
+X-Auto-Response-Suppress: All
+{{headers}}
+Content-Type: text/plain; charset=utf-8
+
+I am out of the office until Monday and will reply when I am back.

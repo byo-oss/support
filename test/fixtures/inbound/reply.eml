@@ -1,0 +1,15 @@
+From: {{fromName}} <{{from}}>
+To: {{to}}
+Subject: Re: {{subject}}
+Message-ID: {{messageId}}
+Date: Tue, 20 Oct 2026 11:15:00 +0000
+MIME-Version: 1.0
+{{headers}}
+Content-Type: text/plain; charset=utf-8
+
+{{body}}
+
+On Mon, 19 Oct 2026 at 10:00, Acme Support <support@help.test> wrote:
+> Thanks for writing in. Could you send us the invoice number?
+>
+> Acme Support
