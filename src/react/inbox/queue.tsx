@@ -495,6 +495,7 @@ export function QueuePane({
                   ticket.assignee?.name ??
                   (ticket.assigneeId ? agentName(ticket.assigneeId) : undefined)
                 }
+                categories={queue.features.categories}
                 onToggle={(on) => toggle(ticket.id, on)}
                 onOpen={() => onOpenTicket(ticket.id)}
               />
@@ -523,6 +524,7 @@ function QueueRow({
   active,
   checked,
   assignee,
+  categories,
   onToggle,
   onOpen,
 }: {
@@ -531,6 +533,8 @@ function QueueRow({
   active: boolean;
   checked: boolean;
   assignee: string | undefined;
+  /** The server's support categories: those tags lead, with an icon. */
+  categories: string[];
   onToggle: (on: boolean) => void;
   onOpen: () => void;
 }) {
@@ -642,8 +646,16 @@ function QueueRow({
                 <span className="truncate">{assignee}</span>
               </span>
             ) : null}
-            {ticket.tags.map((tag) => (
-              <TagPill key={tag}>{tag}</TagPill>
+            {[
+              ...ticket.tags.filter((tag) => categories.includes(tag)),
+              ...ticket.tags.filter((tag) => !categories.includes(tag)),
+            ].map((tag) => (
+              <TagPill
+                key={tag}
+                category={categories.includes(tag) ? tag : undefined}
+              >
+                {tag}
+              </TagPill>
             ))}
           </span>
         </span>

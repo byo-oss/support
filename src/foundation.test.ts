@@ -446,6 +446,7 @@ describe("plugin shape", () => {
         "INVALID_TAG",
         "CANNED_REPLY_NOT_FOUND",
         "ATTACHMENT_NOT_FOUND",
+        "INVALID_CATEGORY",
       ].sort(),
     );
     expect(supportStatements).toEqual({

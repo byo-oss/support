@@ -21,6 +21,14 @@ export function resolveWidgetLabels(
   };
   merged.status = { ...defaultLabels.status, ...overrides?.status };
   merged.priority = { ...defaultLabels.priority, ...overrides?.priority };
+  // per category, so overriding one card's hint keeps its title
+  merged.categories = { ...defaultWidgetLabels.categories };
+  for (const [id, value] of Object.entries(overrides?.categories ?? {})) {
+    merged.categories[id] = {
+      ...defaultWidgetLabels.categories[id],
+      ...value,
+    } as WidgetLabels["categories"][string];
+  }
   // an app that renamed `status` (say, to translate it) keeps its names here
   // until it sets `customerStatus` too
   merged.customerStatus = {
@@ -60,3 +68,16 @@ export const buttonBase = `inline-flex items-center justify-center rounded-md bo
 export const primaryButton = `inline-flex items-center justify-center rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing} ${TOUCH_TARGET}`;
 /** Text inputs and textareas; the app's `fieldClassName` goes after it. */
 export const fieldBase = `w-full rounded-md border border-border bg-background px-2 py-1.5 text-base text-foreground md:text-sm placeholder:text-muted-foreground ${focusRing} ${TOUCH_TARGET}`;
+
+/** A category's wording: the labels, or its id when the app gave none. */
+export function categoryLabels(
+  labels: WidgetLabels,
+  category: string,
+): { title: string; hint: string; placeholder: string } {
+  const found = labels.categories[category];
+  return {
+    title: found?.title ?? category,
+    hint: found?.hint ?? "",
+    placeholder: found?.placeholder ?? labels.messagePlaceholder,
+  };
+}

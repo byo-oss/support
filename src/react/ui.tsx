@@ -40,6 +40,12 @@ const PATHS = {
   shield: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
   keyboard:
     "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M10 13h4",
+  help: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01",
+  bug: "M8 2l1.88 1.88M14.12 3.88L16 2M9 7.13v-1a3 3 0 1 1 6 0v1M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4",
+  bulb: "M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5M9 18h6M10 22h4",
+  users:
+    "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+  tag: "M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.41l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42zM7.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z",
   alert:
     "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01",
 } as const;
@@ -69,6 +75,22 @@ export function Icon({
       <path d={PATHS[name]} />
     </svg>
   );
+}
+
+/** The icon of a support category: the four defaults have their own, any other a tag. */
+export function categoryIcon(category: string): IconName {
+  switch (category) {
+    case "question":
+      return "help";
+    case "bug":
+      return "bug";
+    case "feature":
+      return "bulb";
+    case "sales":
+      return "users";
+    default:
+      return "tag";
+  }
 }
 
 /** Up to two initials of a name or an email's local part. */
@@ -183,7 +205,22 @@ export function PriorityBadge({
 }
 
 /** A tag pill. */
-export function TagPill({ children }: { children: ReactNode }) {
+export function TagPill({
+  children,
+  category,
+}: {
+  children: ReactNode;
+  /** The tag is a support category: it leads, with the category's icon. */
+  category?: string | undefined;
+}) {
+  if (category) {
+    return (
+      <span className="inline-flex max-w-40 items-center gap-1 truncate rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] font-medium leading-4 text-foreground">
+        <Icon name={categoryIcon(category)} className="size-3 shrink-0" />
+        {children}
+      </span>
+    );
+  }
   return (
     <span className="inline-flex max-w-40 items-center truncate rounded-md bg-muted px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground">
       {children}

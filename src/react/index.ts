@@ -38,4 +38,8 @@ export {
   type SupportLabels,
 } from "./labels";
 export { SupportWidget, type SupportWidgetProps } from "./widget";
-export { defaultWidgetLabels, type SupportWidgetLabels } from "./widget/labels";
+export {
+  defaultWidgetLabels,
+  type SupportCategoryLabels,
+  type SupportWidgetLabels,
+} from "./widget/labels";

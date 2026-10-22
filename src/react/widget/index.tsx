@@ -105,7 +105,7 @@ export type SupportWidgetProps = {
 
 type View =
   | { name: "list" }
-  | { name: "new" }
+  | { name: "new"; category?: string }
   | { name: "thread"; ticketId: string };
 
 const defaultNavigate = (href: string) => window.location.assign(href);
@@ -307,7 +307,9 @@ export function SupportWidget({
           tickets={tickets}
           labels={labels}
           onOpen={(ticketId) => go({ name: "thread", ticketId })}
-          onNew={() => go({ name: "new" })}
+          onNew={(category) =>
+            go(category ? { name: "new", category } : { name: "new" })
+          }
           focusOnMount={focusOnMount}
           className={listClassName}
         />
@@ -315,6 +317,7 @@ export function SupportWidget({
       {view.name === "new" ? (
         <NewTicketView
           tickets={tickets}
+          category={view.category}
           labels={labels}
           organizationId={organizationId}
           onBack={backToList}

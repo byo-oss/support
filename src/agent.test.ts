@@ -344,6 +344,7 @@ describe("listSupportTickets (J6)", () => {
     expect((await list()).features).toEqual({
       attachments: false,
       merge: true,
+      categories: ["question", "bug", "feature", "sales"],
     });
   });
 });
@@ -400,7 +401,11 @@ describe("listSupportTickets paging", () => {
       query: {},
       headers: s.world.agents.member.headers,
     });
-    expect(res.features).toEqual({ attachments: true, merge: true });
+    expect(res.features).toEqual({
+      attachments: true,
+      merge: true,
+      categories: ["question", "bug", "feature", "sales"],
+    });
   });
 });
 

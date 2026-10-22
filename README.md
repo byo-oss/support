@@ -190,9 +190,10 @@ For a complete, runnable wiring, see the example app in [`examples/tanstack-star
 | `batchSize` | number | `100` | Deliveries per sweep (and tickets auto-closed per sweep) |
 | `leaseMs` | number (ms) | `300000` (5 min) | A claimed delivery older than this is presumed dead and retried |
 | `pageSize` | number | `25` | Tickets per list page, 1 to 50 |
+| `categories` | string[] \| `false` | `["question", "bug", "feature", "sales"]` | The kinds of support the widget offers as cards when a customer opens a ticket. The pick is stored as a tag on the ticket, so agents filter by it like any tag. Each must be a tag (`a-z0-9_-`, 1 to 50). `false` or `[]`: no cards, and `create-ticket` refuses a `category` |
 | `schema` | | | Rename tables and fields |
 
-Boot validation throws a `[@byo-oss/support] …` error for: a `staffOrganizationId` that isn't a string, `null` or a function (or is an `async` function), `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, an option that must be a whole number but isn't (or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`), and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
+Boot validation throws a `[@byo-oss/support] …` error for: a `staffOrganizationId` that isn't a string, `null` or a function (or is an `async` function), `mailer` without `email` (or `email` without `mailer`), `inbound` without `email`, `inbound` without `source`, `attachments` without `storage`, a negative `replyDelay`, a `replyDomain` that contains `@`, `pageSize` over 50, a `categories` entry that isn't a tag, an option that must be a whole number but isn't (or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`), and `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`. A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`.
 
 ### Seed the staff organization
 
@@ -339,6 +340,8 @@ Queue rows show the requester, status, high and urgent priority, assignee and ta
 The composer keeps each ticket's unsent text and its Reply or Internal note choice while the agent opens other tickets, for as long as the inbox is mounted. Ctrl+Enter (Cmd+Enter) sends; a reply then goes to pending, waiting on the customer. **Send and solve** replies and sets the ticket to solved in one request; it is offered on open and pending tickets, for replies, not notes. The menu next to Send has **Send and keep open** (for "we're looking into it") and **Send and close**. Typing `/` as the whole message suggests canned replies, and `@` suggests team members to mention; arrow keys move, Enter or Tab picks, Escape hides the list.
 
 Keyboard: `j` and `k` move between tickets, Enter opens one, `/` searches, `r` and `n` start a reply or a note, `e` solves the open ticket and `?` lists them. They act only while focus is in the inbox or on the page itself, never in a field or with a modifier held, so they don't take your app's own shortcuts. The `?` sheet (also the keyboard button by the queue's heading) turns single-key shortcuts off, remembered in `localStorage`. With attachments on, files can also be dropped on the composer or pasted into it, and png, jpeg, gif and webp attachments up to 5 MB show a preview in the thread (in the widget too).
+
+**Kinds of support.** With `categories` on (the default), the widget's New ticket, and its empty list, show a card per category: "Ask a question", "Report a bug", "Suggest a feature", "Talk to us". The card opens the form with that kind's heading and placeholder, and the ticket is created with the category as a tag. Word a category, or name one of your own, with `labels.categories` (`{ [id]: { title, hint, placeholder } }`, merged per category); a category without labels shows its id. In the inbox a category tag leads the row's tags, with an icon.
 
 The widget names statuses in the customer's words (`customerStatus`: "With our team", "Awaiting your reply", "Solved", "Closed"). A status you renamed in `status` keeps your name there until you set `customerStatus`. Every relative time shows the full date on hover, from `absoluteTime`.
 
@@ -659,15 +662,15 @@ All of these are better-auth endpoints: call them through `auth.api` on the serv
 
 | `auth.api` key | Method and path | Kind | Input | Returns |
 |---|---|---|---|---|
-| `createSupportTicket` | POST `/support/create-ticket` | own rows | body `subject`, `body`, `organizationId?`, `visibility?` (`"private"` default, or `"organization"`) | `{ ticket }` |
-| `listMySupportTickets` | GET `/support/my-tickets` | own rows (and org-shared, where a member) | query `status?`, `organizationId?`, `q?`, `cursor?` | `{ tickets, nextCursor, features: { attachments } }` |
+| `createSupportTicket` | POST `/support/create-ticket` | own rows | body `subject`, `body`, `organizationId?`, `visibility?` (`"private"` default, or `"organization"`), `category?` (one of `categories`, stored as a tag) | `{ ticket }` |
+| `listMySupportTickets` | GET `/support/my-tickets` | own rows (and org-shared, where a member) | query `status?`, `organizationId?`, `q?`, `cursor?` | `{ tickets, nextCursor, features: { attachments, categories } }` |
 | `getSupportTicket` | GET `/support/ticket` | own rows | query `id` | `{ ticket, messages, attachments }` (customer-visible only) |
 | `replyToSupportTicket` | POST `/support/reply` | own rows | body `ticketId`, `body`, `attachmentIds?` | `{ message }` |
 | `updateMySupportTicket` | POST `/support/update-mine` | own rows (requester only) | body `id`, `status?` (`"solved"` or `"open"`), `visibility?`, `rating?` (`"good"` or `"bad"`) | `{ ticket }` |
 | `markSupportTicketSeen` | POST `/support/mark-seen` | own rows (requester only) | body `id` | `{ ok: true }` |
 | `uploadSupportAttachment` | POST `/support/upload` | own rows | query `ticketId`, `filename`; raw body; `Content-Type` is the file's type | `{ attachment }` (unattached) |
 | `getSupportAttachment` | GET `/support/attachment` | own rows | query `id` | the file |
-| `listSupportTickets` | GET `/support/agent/tickets` | permission-gated `support:read` | query `status?`, `assignee?` (a user id, `"me"` or `"none"`), `tag?`, `organizationId?`, `q?`, `cursor?` | `{ tickets, nextCursor, counts, features: { attachments, merge } }` |
+| `listSupportTickets` | GET `/support/agent/tickets` | permission-gated `support:read` | query `status?`, `assignee?` (a user id, `"me"` or `"none"`), `tag?`, `organizationId?`, `requesterId?` (the requester's user id), `requesterEmail?` (an account-less requester, any case), `q?`, `cursor?` | `{ tickets, nextCursor, counts, features: { attachments, merge, categories } }` |
 | `getSupportTicketAsAgent` | GET `/support/agent/ticket` | permission-gated `support:read` | query `id` | `{ ticket, messages, attachments }` (every message, notes and events included) |
 | `replyAsSupportAgent` | POST `/support/agent/reply` | permission-gated `support:reply` | body `ticketId`, `body`, `internal?` (a note), `status?`, `mentions?` (agent user ids, up to 20), `attachmentIds?` | `{ message }` |
 | `updateSupportTickets` | POST `/support/agent/update` | permission-gated `support:update` | body `ids` (1 to 100), `status?`, `priority?` (or `null`), `assigneeId?` (or `null`), `addTags?`, `removeTags?` | `{ updated }`: the tickets matched, after merge-follow and dedupe, including any the update left unchanged |
@@ -685,7 +688,7 @@ All of these are better-auth endpoints: call them through `auth.api` on the serv
 
 Lists are newest `lastMessageAt` first, `pageSize` at a time, and `nextCursor` is opaque: pass it back as `cursor` (an invalid one answers `INVALID_CURSOR`). `counts` on the agent list is queue-wide and ignores the filters: `{ open, pending, unassigned, mine }`. An unauthenticated call answers 401.
 
-**`features`** tells a client what is switched on. `listMySupportTickets` returns `features.attachments`; `listSupportTickets` returns `features.attachments` and `features.merge`. The components use it to hide the attach and merge controls.
+**`features`** tells a client what is switched on. Both lists return `features.attachments` and `features.categories`; `listSupportTickets` also returns `features.merge`. The components use it to hide the attach and merge controls and to offer the category cards (the widget) and mark category tags with an icon (the inbox).
 
 **Input limits:** `subject` 1 to 200 characters (trimmed), `body` 1 to 50,000, canned `title` 200 and `body` 50,000, `ids` up to 100, `attachmentIds` up to 10, `mentions` up to 20, `q` up to 200, `cursor` up to 10,000, a tag 1 to 50 characters of lowercase letters, digits, `-` and `_`, a stored filename up to 200.
 
@@ -724,6 +727,7 @@ Also exported from the root: `supportStatements`, `supportRoles`, `SUPPORT_ERROR
 | `NOT_AN_AGENT` | 400 | An assignee or a mention that fails `isAgent` |
 | `INVALID_CURSOR` | 400 | A malformed cursor |
 | `INVALID_TAG` | 400 | A tag that is empty, too long or has characters outside `a-z0-9_-` |
+| `INVALID_CATEGORY` | 400 | A `category` on `create-ticket` that isn't one of the server's `categories` |
 | `CANNED_REPLY_NOT_FOUND` | 404 | Saving a canned reply with an unknown `id` |
 
 ## Delivery guarantees

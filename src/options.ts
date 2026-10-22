@@ -230,6 +230,14 @@ export type SupportOptions = {
   leaseMs?: number;
   /** Tickets per list page, 1 to 50. @default 25 */
   pageSize?: number;
+  /**
+   * The kinds of support a customer picks from when opening a ticket in the
+   * widget. The pick is stored as a tag on the new ticket, so agents filter
+   * by it like any tag. Each is a tag: 1 to 50 of a-z, 0-9, `-` and `_`.
+   * `false` or `[]`: no picker, and `create-ticket` refuses a `category`.
+   * @default ["question", "bug", "feature", "sales"]
+   */
+  categories?: readonly string[] | false;
   /** Rename tables and fields (SPEC §2.3). */
   schema?: InferOptionSchema<SupportSchema>;
 };
@@ -270,6 +278,8 @@ export type ResolvedAttachmentOptions = {
 export type SupportFeatures = {
   attachments: boolean;
   merge: boolean;
+  /** The `categories` option, in order (empty when off). */
+  categories: string[];
 };
 
 export type ResolvedSupportOptions = {
@@ -318,6 +328,38 @@ export type ResolvedSupportOptions = {
  * which turns off `features.merge`.
  */
 export const MERGE_AVAILABLE = true;
+
+/** The kinds of support the widget offers unless `categories` says otherwise. */
+export const DEFAULT_CATEGORIES = [
+  "question",
+  "bug",
+  "feature",
+  "sales",
+] as const;
+
+// the same rule as tags (`normalizeTags`): a category is stored as one
+const CATEGORY_PATTERN = /^[a-z0-9_-]{1,50}$/;
+
+function resolveCategories(
+  value: readonly string[] | false | undefined,
+): string[] {
+  if (value === false) return [];
+  const list = value ?? DEFAULT_CATEGORIES;
+  if (!Array.isArray(list)) {
+    throw new Error("support: categories must be an array of tags or false");
+  }
+  const out: string[] = [];
+  for (const raw of list) {
+    const category = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    if (!CATEGORY_PATTERN.test(category)) {
+      throw new Error(
+        `support: category ${JSON.stringify(raw)} is not a tag (1 to 50 of a-z, 0-9, - and _)`,
+      );
+    }
+    if (!out.includes(category)) out.push(category);
+  }
+  return out;
+}
 
 export const DEFAULT_ALLOWED_TYPES = [
   "image/png",
@@ -584,7 +626,11 @@ export function resolveOptions(
     leaseMs: positiveInteger("leaseMs", options.leaseMs, 5 * 60_000),
     pageSize,
     uploadTtlMs: 24 * 60 * 60_000,
-    features: { attachments: !!options.attachments, merge: MERGE_AVAILABLE },
+    features: {
+      attachments: !!options.attachments,
+      merge: MERGE_AVAILABLE,
+      categories: resolveCategories(options.categories),
+    },
     raw: options,
     logger: console,
   };

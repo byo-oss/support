@@ -61,7 +61,7 @@ export type CustomerTicketResponse = { ticket: CustomerTicket };
 export type CustomerTicketListResponse = {
   tickets: CustomerTicket[];
   nextCursor: string | null;
-  features: Pick<SupportFeatures, "attachments">;
+  features: Pick<SupportFeatures, "attachments" | "categories">;
 };
 /** `getSupportTicket`. */
 export type CustomerTicketDetailResponse = {

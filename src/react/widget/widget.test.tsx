@@ -73,6 +73,8 @@ type Setup = {
   tickets?: unknown[];
   detail?: { ticket?: unknown; messages?: unknown[]; attachments?: unknown[] };
   attachments?: boolean;
+  /** `features.categories`; unset: none (an older server). */
+  categories?: string[];
   nextCursor?: string | null;
 };
 
@@ -83,7 +85,10 @@ function makeClient(setup: Setup = {}) {
       ok({
         tickets: setup.tickets ?? [ticket("t1"), ticket("t2")],
         nextCursor: setup.nextCursor ?? null,
-        features: { attachments: setup.attachments ?? true },
+        features: {
+          attachments: setup.attachments ?? true,
+          ...(setup.categories ? { categories: setup.categories } : {}),
+        },
       }),
     ),
     ticket: vi.fn((_input: unknown) =>
@@ -1095,6 +1100,19 @@ describe("SupportWidget labels", () => {
       ...defaultLabels,
       ...defaultWidgetLabels,
     })) {
+      if (key === "categories") {
+        labels[key] = Object.fromEntries(
+          Object.keys(value as object).map((id) => [
+            id,
+            {
+              title: tagged(`${key}.${id}.title`),
+              hint: tagged(`${key}.${id}.hint`),
+              placeholder: tagged(`${key}.${id}.placeholder`),
+            },
+          ]),
+        );
+        continue;
+      }
       if (key === "status" || key === "priority" || key === "customerStatus") {
         labels[key] = Object.fromEntries(
           Object.keys(value as object).map((k) => [k, tagged(`${key}.${k}`)]),
@@ -1996,5 +2014,83 @@ describe("SupportWidget classes and layout", () => {
     const panel = screen.getByRole("dialog");
     expect(panel.className).toContain("max-w-[22.5rem]");
     expect(panel.className).toContain("w-[calc(100vw-2rem)]");
+  });
+});
+
+describe("SupportWidget categories", () => {
+  const CATEGORIES = ["question", "bug", "feature", "sales"];
+
+  it("an empty list offers the kinds of support; a card opens its form", async () => {
+    const { mocks } = renderWidget({ tickets: [], categories: CATEGORIES });
+    await openPanel();
+    expect(await screen.findByText("What can we help with?")).toBeTruthy();
+    for (const title of [
+      "Ask a question",
+      "Report a bug",
+      "Suggest a feature",
+      "Talk to us",
+    ]) {
+      expect(
+        screen.getByRole("button", { name: new RegExp(title) }),
+      ).toBeTruthy();
+    }
+    fireEvent.click(screen.getByRole("button", { name: /Report a bug/ }));
+    expect(
+      await screen.findByRole("heading", { name: "Report a bug" }),
+    ).toBeTruthy();
+    const message = screen.getByLabelText("Message") as HTMLTextAreaElement;
+    expect(message.placeholder).toBe(
+      "What happened, and what did you expect to happen?",
+    );
+    fireEvent.change(screen.getByLabelText("Subject"), {
+      target: { value: "Export broken" },
+    });
+    fireEvent.change(message, { target: { value: "Nothing downloads" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit ticket" }));
+    await waitFor(() =>
+      expect(mocks.createTicket).toHaveBeenCalledWith({
+        subject: "Export broken",
+        body: "Nothing downloads",
+        category: "bug",
+      }),
+    );
+  });
+
+  it("New ticket shows the cards first, and Back from the form returns to them", async () => {
+    renderWidget({ categories: CATEGORIES });
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    expect(
+      await screen.findByRole("heading", { name: "What can we help with?" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Talk to us/ }));
+    expect(
+      await screen.findByRole("heading", { name: "Talk to us" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("heading", { name: "What can we help with?" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByText("My tickets")).toBeTruthy();
+  });
+
+  it("names an unknown category by its id, and overrides merge per category", async () => {
+    renderWidget(
+      { tickets: [], categories: ["bug", "billing"] },
+      { labels: { categories: { bug: { hint: "Broken?" } } } as never },
+    );
+    await openPanel();
+    const bug = await screen.findByRole("button", { name: /Report a bug/ });
+    expect(bug.textContent).toContain("Broken?");
+    expect(screen.getByRole("button", { name: /^billing$/ })).toBeTruthy();
+  });
+
+  it("goes straight to the form when the server offers no categories", async () => {
+    renderWidget({ categories: [] });
+    await openPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "New ticket" }));
+    expect(await screen.findByLabelText("Subject")).toBeTruthy();
+    expect(screen.queryByText("What can we help with?")).toBeNull();
   });
 });

@@ -310,12 +310,19 @@ describe("attachments option", () => {
       query: {},
       headers: s.w.customer.headers,
     });
-    expect(mine.features).toEqual({ attachments: true });
+    expect(mine.features).toEqual({
+      attachments: true,
+      categories: ["question", "bug", "feature", "sales"],
+    });
     const queue = await s.auth.api.listSupportTickets({
       query: {},
       headers: s.w.agents.member.headers,
     });
-    expect(queue.features).toEqual({ attachments: true, merge: true });
+    expect(queue.features).toEqual({
+      attachments: true,
+      merge: true,
+      categories: ["question", "bug", "feature", "sales"],
+    });
   });
 
   it("refuses HTML, SVG and XHTML in allowedTypes at boot", () => {

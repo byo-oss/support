@@ -142,7 +142,11 @@ describe("useSupportTickets", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.tickets.map((t) => t.id)).toEqual(["t1", "t2"]);
-    expect(result.current.features).toEqual({ attachments: true });
+    // an older server sends no categories: none offered
+    expect(result.current.features).toEqual({
+      attachments: true,
+      categories: [],
+    });
     expect(result.current.hasMore).toBe(false);
     expect(result.current.error).toBeNull();
     expect(mocks.myTickets).toHaveBeenCalledWith({ query: {} });
@@ -468,7 +472,11 @@ describe("useSupportQueue", () => {
       unassigned: 1,
       mine: 0,
     });
-    expect(result.current.features).toEqual({ attachments: true, merge: true });
+    expect(result.current.features).toEqual({
+      attachments: true,
+      merge: true,
+      categories: [],
+    });
     expect(result.current.tags).toEqual(["billing", "bug"]);
     expect(mocks.agentTickets).toHaveBeenCalledWith({
       query: { status: "open", assignee: "me", tag: "bug" },

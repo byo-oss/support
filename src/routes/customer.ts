@@ -72,6 +72,8 @@ const createBodySchema = z.object({
   body: bodySchema,
   organizationId: idSchema.optional(),
   visibility: z.enum(VISIBILITIES).optional(),
+  /** One of the server's `categories`; stored as a tag. */
+  category: z.string().min(1).max(SUPPORT_LIMITS.tagLength).optional(),
 });
 
 const listQuerySchema = z
@@ -229,6 +231,8 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
      * `organizationId` must be one of the caller's organizations (403
      * `NOT_A_MEMBER`); `visibility: "organization"` needs an
      * `organizationId` (403 `NOT_ALLOWED`). Default visibility: `private`.
+     * `category` must be one of the server's `categories` (400
+     * `INVALID_CATEGORY`) and becomes a tag on the ticket.
      */
     createSupportTicket: createAuthEndpoint(
       "/support/create-ticket",
@@ -240,6 +244,16 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
         const { subject, body, organizationId, visibility } = ctx.body;
         if (visibility === "organization" && !organizationId) {
           throw notAllowed();
+        }
+        const category = ctx.body.category?.trim().toLowerCase();
+        if (
+          category !== undefined &&
+          !opts.features.categories.includes(category)
+        ) {
+          throw APIError.from(
+            "BAD_REQUEST",
+            SUPPORT_ERROR_CODES.INVALID_CATEGORY,
+          );
         }
         if (organizationId) {
           const member = await findMember(rt.adapter, {
@@ -256,6 +270,7 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
           organizationId: organizationId ?? null,
           visibility: visibility ?? "private",
           verified: true,
+          ...(category ? { tags: [category] } : {}),
           actorId: me,
         });
         return {
@@ -281,7 +296,10 @@ export function customerEndpoints(opts: ResolvedSupportOptions) {
         return {
           tickets: page.tickets.map((row) => toCustomerTicket(row, me)),
           nextCursor: page.nextCursor,
-          features: { attachments: opts.features.attachments },
+          features: {
+            attachments: opts.features.attachments,
+            categories: opts.features.categories,
+          },
         } satisfies CustomerTicketListResponse;
       },
     ),

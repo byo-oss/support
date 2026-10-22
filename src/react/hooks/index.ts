@@ -45,6 +45,8 @@ export type SupportFetchClient = {
     createTicket(input: {
       subject: string;
       body: string;
+      /** One of `features.categories`; stored as a tag. */
+      category?: string;
       organizationId?: string;
       visibility?: TicketVisibility;
     }): Result<CustomerTicketResponse>;
@@ -184,14 +186,16 @@ export type UseSupportTicketsOptions = Polling & {
 
 export type UseSupportTicketsResult = AsyncState & {
   tickets: WireCustomerTicket[];
-  /** From the server (`listMySupportTickets`). */
-  features: { attachments: boolean };
+  /** From the server (`listMySupportTickets`). `categories`: the kinds of support to offer. */
+  features: { attachments: boolean; categories: string[] };
   hasMore: boolean;
   loadMore: () => Promise<void>;
   /** Creates a ticket and refreshes the list. Null on error (see `error`). */
   createTicket: (input: {
     subject: string;
     body: string;
+    /** One of `features.categories`; stored as a tag. */
+    category?: string;
     organizationId?: string;
     visibility?: TicketVisibility;
   }) => Promise<WireCustomerTicket | null>;
@@ -214,7 +218,7 @@ export function useSupportTickets(
   const query = { status, organizationId, q };
   const list = useSupportPagedResource<
     WireCustomerTicket,
-    { attachments: boolean }
+    { attachments: boolean; categories?: string[] }
   >({
     scope: `${status ?? ""}|${organizationId ?? ""}|${q ?? ""}`,
     pollInterval,
@@ -254,7 +258,11 @@ export function useSupportTickets(
 
   return {
     tickets: list.rows,
-    features: list.extra ?? { attachments: false },
+    features: {
+      attachments: list.extra?.attachments ?? false,
+      // an older server sends no categories: no picker
+      categories: list.extra?.categories ?? [],
+    },
     hasMore: list.hasMore,
     isLoading: list.isLoading,
     error: list.error,
@@ -396,7 +404,7 @@ export type UseSupportQueueResult = AsyncState & {
   tickets: WireAgentTicket[];
   counts: AgentCounts;
   /** From the server (`listSupportTickets`). */
-  features: { attachments: boolean; merge: boolean };
+  features: { attachments: boolean; merge: boolean; categories: string[] };
   /** Every tag in use (`listSupportTags`). */
   tags: string[];
   hasMore: boolean;
@@ -442,7 +450,11 @@ export function useSupportQueue(
     WireAgentTicket,
     {
       counts: AgentCounts;
-      features: { attachments: boolean; merge: boolean };
+      features: {
+        attachments: boolean;
+        merge: boolean;
+        categories?: string[];
+      };
       tags: string[];
     }
   >({
@@ -527,7 +539,11 @@ export function useSupportQueue(
   return {
     tickets: list.rows,
     counts: extra?.counts ?? { open: 0, pending: 0, unassigned: 0, mine: 0 },
-    features: extra?.features ?? { attachments: false, merge: false },
+    features: {
+      attachments: extra?.features.attachments ?? false,
+      merge: extra?.features.merge ?? false,
+      categories: extra?.features.categories ?? [],
+    },
     tags: extra?.tags ?? [],
     hasMore: list.hasMore,
     isLoading: list.isLoading,
