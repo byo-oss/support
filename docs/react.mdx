@@ -1,0 +1,130 @@
+---
+title: React components
+description: The SupportWidget and SupportInbox components, their props for deep links, polling, labels and sizes, the headless hooks, and the Tailwind setup.
+group: guides
+order: 2
+---
+
+`@byo-oss/support/react` has two components: `SupportWidget` for customers and `SupportInbox` for agents. Both are built on headless hooks you can use instead, and both are styled with Tailwind classes and shadcn theme variables.
+
+## Widget: popover or inline
+
+`<SupportWidget />` is a popover by default: a launcher button with the unread count, and a panel that opens below it, 360 px wide at most, aligned to the launcher's right edge so it extends to the left. Put it at the right end of your header. Near the left edge of the screen the panel would run off it. Escape or a click outside closes it.
+
+`variant="inline"` renders the panel in place instead, at the full width of its container, with no launcher, and it never closes. Use it for a page of its own: "My tickets", or the page your email links open.
+
+- `ticketId` opens that ticket's thread. A popover starts open unless `defaultOpen` or `open` says otherwise. A new value opens that ticket. `null` or `undefined` after a ticket goes back to the list.
+- `onTicketChange(id | null)` is called when the user opens a ticket (a row, or the one they just created) with its id, and with `null` when they go Back to the list or the new-ticket form. Sync your URL with it. Changes that come from the `ticketId` prop never call it.
+- `defaultOpen` sets whether the popover starts open. The default is open when `ticketId` is set.
+- `open` and `onOpenChange` control the popover. The launcher, Escape and a click outside call `onOpenChange`, and the panel follows `open`. When your app sets `open` to `true` while `ticketId` is set, the panel shows that ticket's thread. Set `open` from `onOpenChange` in the same event. An `open` that turns `true` in a later render (after an `await`, or through a router navigation) counts as your app opening the panel and shows `ticketId`'s thread.
+
+```tsx
+const [open, setOpen] = useState(Boolean(ticketId));
+<SupportWidget client={authClient} ticketId={ticketId} open={open} onOpenChange={setOpen} />
+```
+
+## Deep links
+
+Email links and in-app notifications should open a page with the inline widget. It works at any width and doesn't close on the first click. Pass `onTicketChange` so the URL follows the widget:
+
+```tsx
+// /help?ticket=<id>, or whatever ticketPath returns
+<SupportWidget
+  client={authClient}
+  variant="inline"
+  ticketId={ticket ?? null}
+  onTicketChange={(next) => router.push(next ? `/help?ticket=${next}` : "/help")}
+  onNavigate={(href) => router.push(href)}
+/>
+```
+
+`onTicketChange(null)` (Back to the list) needs an address too. Pick the list route together with `ticketPath`: the list at `/help` with ``ticketPath: (id) => `/help?ticket=${id}` ``, as above, or one route with an optional id (`/help/{-$id}` in TanStack Router, or a layout in Next.js) with ``ticketPath: (id) => `/help/${id}` ``.
+
+Keep the page and the ticket on one route: a query parameter, an optional path parameter, or a layout route that renders the widget for both paths. Two sibling routes (`/help` and `/help/:id`, each rendering its own widget) remount the component every time the user opens a ticket or goes Back. It then loads the list again from the first page and loses its scroll position and any pages loaded with "Load more".
+
+**Staff.** `SupportInbox` takes `ticketId` (opens that ticket; `null` or `undefined` closes the thread) and `onTicketChange(id | null)`. It is called when the user opens a ticket, goes Back, follows a merge to its target or deletes the open ticket. Map both to a route such as `/staff/support/:id`, so notification links open the ticket and the URL follows the inbox. Changes that come from the `ticketId` prop never call `onTicketChange`, so the round trip doesn't loop.
+
+Render the inbox once, for both `/staff/support` and `/staff/support/:id`: from one route with an optional `:id`, or from a layout route whose child only declares the param. Don't render it from two sibling routes. Moving between siblings unmounts one inbox and mounts another, which loses the search, the filters and the checked rows every time the user opens or closes a ticket.
+
+For example, a TanStack Router layout route `/staff/support` with a child `/staff/support/$id` that has no component of its own:
+
+```tsx title="routes/staff.support.tsx"
+// renders for /staff/support and /staff/support/<id>
+function StaffSupport() {
+  const navigate = useNavigate();
+  const { id } = useParams({ strict: false }); // set by the child route
+  const { agents } = Route.useLoaderData();
+  return (
+    <SupportInbox
+      client={authClient}
+      agents={agents}
+      ticketId={id ?? null}
+      onTicketChange={(next) => navigate({ href: next ? `/staff/support/${next}` : "/staff/support" })}
+      onNavigate={(href) => navigate({ href })}
+    />
+  );
+}
+```
+
+With Next.js, render the inbox from `app/staff/support/layout.tsx` (a layout stays mounted as its child pages change), read the id with `useParams()`, give `app/staff/support/page.tsx` and `app/staff/support/[id]/page.tsx` nothing to render, and push the same paths with `router.push`.
+
+## Kinds of support
+
+With `categories` on, which is the default, the widget's New ticket form, and its empty list, show a card per category: "Ask a question", "Report a bug", "Suggest a feature" and "Talk to us". The card opens the form with that kind's heading and placeholder, and the ticket is created with the category as a tag. Word a category, or name one of your own, with `labels.categories` (`{ [id]: { title, hint, placeholder } }`, merged per category). A category without labels shows its id. In the inbox, a category tag leads the row's tags, with an icon. Turn the cards off with `categories: false` (see [Options](/docs/support/options#categories)).
+
+The customer's status names are `labels.customerStatus`: "With our team", "Awaiting your reply", "Solved" and "Closed" by default. A status you renamed in `status` keeps your name there until you set `customerStatus`. Every relative time shows the full date on hover, from `absoluteTime`.
+
+## Inbox layout
+
+Give `SupportInbox` a height: put it in a flex column with `className="min-h-0 flex-1"`, or give its parent a fixed height. With a height, the queue, the thread and the details panel each scroll on their own, and the composer stays at the bottom of the thread. Without one, the inbox grows with its content and the page scrolls instead, taking the ticket's header and the composer out of view on a long thread. It is never shorter than 28rem.
+
+From `md` up, the queue and the thread sit side by side. From `lg` up, the details panel (requester, status, priority, assignee, tags, merge, delete) is a third column. Below that, a Details button shows it. On a phone, the queue and the thread take turns.
+
+Queue rows show the requester, status, high and urgent priority, assignee and tags. An open ticket also shows how long the customer has waited since their last reply. Only replies move `lastMessageAt`, and a customer reply reopens the ticket. The wait is quiet at first, amber from 6 hours and red from a day.
+
+The composer keeps each ticket's unsent text and its Reply or Internal note choice while the agent opens other tickets, for as long as the inbox is mounted. Ctrl+Enter (Cmd+Enter) sends. A reply then goes to pending, waiting on the customer. **Send and solve** replies and sets the ticket to solved in one request. It is offered on open and pending tickets, for replies, not notes. The menu next to Send has **Send and keep open** (for "we're looking into it") and **Send and close**. Typing `/` as the whole message suggests canned replies, and `@` suggests team members to mention. Arrow keys move, Enter or Tab picks, and Escape hides the list.
+
+Keyboard shortcuts: `j` and `k` move between tickets, Enter opens one, `/` searches, `r` and `n` start a reply or a note, `e` solves the open ticket and `?` lists them. They act only while focus is in the inbox or on the page itself, never in a field or with a modifier held, so they don't take your app's own shortcuts. The `?` sheet (also the keyboard button by the queue's heading) turns single-key shortcuts off, remembered in `localStorage`.
+
+With attachments on, files can also be dropped on the composer or pasted into it. Png, jpeg, gif and webp attachments up to 5 MB show a preview in the thread, in the widget too.
+
+## Polling
+
+The components poll. There are no websockets, and while the tab is hidden nothing polls.
+
+- **Widget, closed popover:** the ticket list every `badgePollInterval` (60 s by default), for the launcher's unread count. That is one request a minute per signed-in tab on every page that shows the launcher.
+- **Widget, open or inline:** the ticket list and the open thread every `pollInterval` (15 s by default). Opening the popover refreshes at once.
+- **Inbox:** the queue and the open ticket every `pollInterval` (15 s by default).
+
+`0` turns either interval off. The two widget intervals are independent, so `pollInterval={0}` leaves the badge poll on.
+
+## Labels, wording and sizes
+
+Every string has a `labels` override. The default copy never says "agent" or "inbox", which apps often use for their own AI agents and inbox. The staff view's heading is "Support queue". A reply from staff without a name shows as "Support". The message of `NOT_AN_AGENT` says "That user is not on the support team".
+
+The API keeps "agent" as the name of the staff role: `SupportInbox` and its `agents` prop, the `/support/agent/*` endpoints, `isAgent`, `NOT_AN_AGENT`, `authorType: "agent"` and the `support.agent.*` events. Rename anything on screen with `labels`.
+
+On a coarse pointer (a touch screen), every button, field, ticket row and checkbox label is at least 44 px tall, and the × buttons are 44 px wide. With a mouse or trackpad they keep their compact size. Fields use 16 px text below the `md` breakpoint, so iOS doesn't zoom into a focused field.
+
+`fieldClassName`, on both components, is added to every text input, select and textarea. It doesn't apply to checkboxes, radios or the file input.
+
+## Headless hooks
+
+Use the hooks when you want your own markup. They are exported from `@byo-oss/support/react`: `useSupportTickets`, `useSupportTicket`, `useSupportQueue`, `useSupportAgentTicket`, `useSupportCannedReplies` and `useSupportUpload`. `defaultLabels`, `defaultWidgetLabels` and `defaultInboxLabels` are the English defaults, to start an override from.
+
+## Tailwind
+
+Tailwind v4 skips `node_modules` when it scans for classes, so point it at the package from your CSS or some of the components' classes won't be generated:
+
+```css title="app.css"
+@import "tailwindcss";
+@source "../node_modules/@byo-oss/support/dist"; /* path relative to this CSS file */
+```
+
+The components are styled with Tailwind classes only. Without Tailwind they render unstyled, and they still work.
+
+The components use shadcn's theme tokens, with no UI runtime dependencies and no shadcn required: `background`, `foreground`, `border`, `ring`, `accent`, `accent-foreground`, `muted`, `muted-foreground`, `primary`, `primary-foreground`, `popover`, `popover-foreground` and `destructive`. Define those CSS variables (a shadcn theme does). Status dots, the high-priority pill and internal notes also use Tailwind's default `sky`, `amber` and `emerald` palettes (with `dark:` variants), so keep the default palette or define those colors. Destructive confirm buttons are `bg-destructive text-white`, as shadcn's own destructive button is, so they don't need `destructive-foreground`.
+
+Class props append to the component's own classes. They never replace them. Pass `className` for the root (for the inline widget, the panel) and `listClassName`, `threadClassName`, `messageClassName`, `composerClassName`, `buttonClassName` and `fieldClassName` for the parts. On the inbox, `queueClassName` replaces `listClassName`. On the widget, `buttonClassName` is the launcher's. On the inbox it goes on every action button.
+
+There is no class merging. Your classes are added after the defaults as they are. When both set the same property (`p-4` on top of the component's `p-3`, say), the order of the rules in the generated CSS decides, not the order of the classes, so yours may lose. To win, use Tailwind's `!` important modifier (`p-4!`) or a more specific variant or selector.

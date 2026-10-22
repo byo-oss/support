@@ -1,0 +1,79 @@
+---
+title: Options
+description: The options accepted by support(), with their types and defaults, the boot checks that refuse a bad combination, and the provider interfaces you can plug in.
+group: reference
+order: 2
+---
+
+`support(options)`. Every option is optional. With none, nothing sends or receives email, and nothing is stored outside your database.
+
+| Option | Type | Default | Notes |
+|---|---|---|---|
+| `staffOrganizationId` | string \| `null` \| `() => string \| null \| undefined` | | The vendor's staff organization. Agents are its members whose role has `support` actions. A function is called on every request that needs the id (the default `authorize` and `isAgent`, and the staff check when a member leaves). It must be synchronous and must not throw. An `async` function is refused at boot. A function that throws, or returns anything but a string, `null` or `undefined` (a Promise, say), counts as no staff organization and is logged once. `null`: no agents, on purpose. A custom `authorize` still decides, with `organizationId` undefined. Pass `isAgent` too, or assignment and @mentions fail with `NOT_AN_AGENT`. Unset: the same, plus one warning at boot |
+| `authorize` | `({ session, headers, organizationId, permissions }) => boolean \| Promise<boolean>` | staff-organization check | Replaces the permission check on every agent endpoint. `organizationId` is always `staffOrganizationId` (as resolved for the request), never a ticket's organization. `permissions` is, for example, `{ support: ["reply"] }`. Without a staff organization (`null`), pass `isAgent` as well, since the default looks in the staff organization |
+| `acceptSession` | `({ session, headers, kind }) => boolean \| Promise<boolean>` | refuses impersonated sessions | Called first on every session endpoint. `kind` is `"customer"` or `"agent"`. `false` answers 403 `SESSION_NOT_ACCEPTED` |
+| `isAgent` | `(userId) => boolean \| Promise<boolean>` | member of the staff organization whose role has `support: ["read"]` | Who can be assigned a ticket or @mentioned. Anyone else is `NOT_AN_AGENT` |
+| `mailer` | `Mailer` | | Sends thread mail to requesters. Requires `email`. Unset: no outbound mail and no `supportDelivery` table |
+| `email` | `{ from, replyDomain, appUrl, ticketPath?, replyDelay?, requireVerifiedEmail? }` | | Required with `mailer` and with `inbound`. See [Email](/docs/support/email) |
+| `email.from` | string | required | Sender of thread mail, for example `"Acme Support <support@acme.com>"` |
+| `email.replyDomain` | string | required | Replies go to `support+<token>@<replyDomain>`. A domain, not an address |
+| `email.appUrl` | string | required | Your app's origin, for the ticket link in mail |
+| `email.ticketPath` | `(id) => string` | `` (id) => `/support/${id}` `` | Path of a ticket in your app. Set it if the default could collide with your routes |
+| `email.replyDelay` | number (ms) | `120000` | Delay before an agent reply is mailed. Skipped if the requester saw the reply first. `0` sends at once. Must be 0 or more |
+| `email.requireVerifiedEmail` | boolean | `true` | Mail account holders only at a verified address |
+| `inbound` | `{ source, newTickets?, maxPerSenderPerHour?, maxUnverifiedPerHour?, maxBytes?, resolver? }` | | Receive email at `/support/inbound`. Requires `email`. See [Email](/docs/support/email#inbound-email) |
+| `inbound.source` | `SupportInboundSource` | required | `rawRelay(...)` or `wrapsInbound(...)` |
+| `inbound.newTickets` | boolean | `true` | Open a new ticket for mail that doesn't thread. A requester's reply to a closed ticket still opens its follow-up |
+| `inbound.maxPerSenderPerHour` | number | `20` | Verified email replies stored per sender in the last hour before more are dropped |
+| `inbound.maxUnverifiedPerHour` | number | `100` | Unverified messages stored in the last hour, across all senders, before more are dropped |
+| `inbound.maxBytes` | number | `26214400` (25 MiB) | Largest raw message accepted |
+| `inbound.resolver` | `DkimResolver`: `(name, rrtype) => Promise<string[] \| string[][]>` | system DNS | DNS TXT lookups for the DKIM check, for tests and custom DNS |
+| `attachments` | `{ storage, maxBytes?, allowedTypes? }` | | Enable attachments. Unset: no `supportAttachment` table, and uploads answer `STORAGE_NOT_CONFIGURED`. See [Attachments](/docs/support/attachments) |
+| `attachments.storage` | `SupportStorage` | required | `s3Storage(...)`, or your own |
+| `attachments.maxBytes` | number | `10485760` (10 MiB) | Largest upload |
+| `attachments.allowedTypes` | string[] | png, jpeg, gif, webp, pdf, plain text, csv, zip | Allowed content types. HTML, SVG and XHTML are refused at boot even if listed |
+| `onEvent` | `(event: ByoEvent) => void \| Promise<void>` | | Receives every support event, after the write commits. Errors are logged, never thrown. See [Events](/docs/support/events) |
+| `organizationCleanup` | boolean | `true` | Clean up after the organization plugin's delete, remove-member and leave endpoints. Turn off to keep history. See [Lifecycle](/docs/support/lifecycle) |
+| `autoCloseAfter` | number (ms) | `604800000` (7 days) | The sweep closes tickets solved this long ago |
+| `maxAttempts` | number | `5` | Attempts per delivery before it is marked `failed` |
+| `batchSize` | number | `100` | Deliveries per sweep (and tickets auto-closed per sweep) |
+| `leaseMs` | number (ms) | `300000` (5 min) | A claimed delivery older than this is presumed dead and retried |
+| `pageSize` | number | `25` | Tickets per list page, 1 to 50 |
+| `categories` | string[] \| `false` | `["question", "bug", "feature", "sales"]` | The kinds of support the widget offers as cards when a customer opens a ticket. The pick is stored as a tag on the ticket, so agents filter by it like any tag. Each must be a tag (`a-z0-9_-`, 1 to 50 characters). `false` or `[]`: no cards, and `create-ticket` refuses a `category` |
+| `schema` | | | Rename tables and fields. See [Schema](/docs/support/schema) |
+
+## Categories
+
+`categories` is on by default, so the widget shows the cards from the start. To keep the form as it was, set `categories: false`. To offer your own kinds, pass tags:
+
+```ts title="lib/auth.ts"
+support({
+  staffOrganizationId,
+  categories: ["billing", "bug", "question"],
+});
+```
+
+Each category needs a title, hint and placeholder for the widget. Set them with `labels.categories`, see [React components](/docs/support/react#kinds-of-support). Setting `categories` to a list also changes which values `create-ticket` accepts (see [API](/docs/support/api)).
+
+## Boot checks
+
+Boot validation throws an error for a combination that can't work. The message begins `[@byo-oss/support]`, except for `categories`, whose message begins `support:`. The checks cover:
+
+- a `staffOrganizationId` that isn't a string, `null` or a function, or is an `async` function;
+- `mailer` without `email`, `email` without `mailer`, `inbound` without `email`, `inbound` without `source`, and `attachments` without `storage`;
+- a negative `replyDelay`, and a `replyDomain` that contains `@`;
+- `pageSize` over 50, and a `categories` entry that isn't a tag;
+- a whole-number option that isn't one, or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, and 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`;
+- `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`.
+
+A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`. `rawRelay` and `wrapsInbound` also throw at boot for a secret or key with leading or trailing whitespace (see [Email](/docs/support/email#inbound-email)).
+
+## Provider interfaces
+
+Three interfaces are plugged in, and each is exported as a named type:
+
+- **`Mailer`** (from `@byo-oss/mailer`) sends thread mail. `wrapsMailer` covers AWS SES, and `@byo-oss/mailer` has `sesMailer` and `emailSdkMailer` for other setups. See [Email](/docs/support/email#outbound-replies).
+- **`SupportInboundSource`** reads inbound mail: `rawRelay` for any relay that POSTs raw messages, and `wrapsInbound` for Wraps. See [Email](/docs/support/email#inbound-email).
+- **`SupportStorage`** holds attachments: `s3Storage` for S3 and S3-compatible stores, `memoryStorage` for tests, or your own. See [Attachments](/docs/support/attachments).
+
+Community adapters are separate packages outside the `@byo-oss` scope, named `byo-support-<provider>` (for example `byo-support-gcs`), or the same under your own scope. They depend on this package's types and nothing else. Run the contract suites against yours: `testSupportInboundSource` and `testSupportStorage` from `@byo-oss/support/testing` (ESM only, needs `vitest`), and `testMailer` from `@byo-oss/mailer/testing`. Each takes a required `failing` factory, so the retry check always runs. No community adapters are known yet.

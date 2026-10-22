@@ -1,0 +1,32 @@
+---
+title: Uninstall
+description: How to remove support, its components and its cron, drop the tables it created and clear its attachment bucket.
+group: operations
+order: 2
+---
+
+Remove `support()` from `betterAuth({ plugins })`. Keep `organization()` if you use it for anything else. Then remove `supportClient()` from your auth client, `SupportWidget`, `SupportInbox` and the hooks from your UI, the cron that calls `processSupportDeliveries`, the inbound route at your mail relay, and the Tailwind `@source` line.
+
+Then drop the tables, children before the tables they reference. Use the names your adapter or the `schema` option gave them. The quotes keep the camelCase names (MySQL uses backticks):
+
+```sql
+DROP TABLE IF EXISTS "supportAttachment";
+DROP TABLE IF EXISTS "supportDelivery";
+DROP TABLE IF EXISTS "supportMessage";
+DROP TABLE IF EXISTS "supportTicketTag";
+DROP TABLE IF EXISTS "supportCannedReply";
+DROP TABLE IF EXISTS "supportTicket";
+DROP TABLE IF EXISTS "supportCounter";
+```
+
+If your tables were generated with snake_case names (better-auth's drizzle generator does this unless the adapter is set to camelCase), drop `support_attachment`, `support_delivery`, `support_message`, `support_ticket_tag`, `support_canned_reply`, `support_ticket` and `support_counter` instead, in the same order, without quotes.
+
+`supportAttachment` and `supportDelivery` exist only if you used `attachments` and `mailer`. `IF EXISTS` covers both cases. No foreign key points at any support table from outside this list.
+
+Last, delete the `support/` prefix in your attachment bucket, if you used `attachments`:
+
+```sh
+aws s3 rm s3://YOUR_BUCKET/support/ --recursive
+```
+
+The plugin adds no columns to better-auth's own tables (`user`, `organization`, `member`), so there is nothing else to clean up.

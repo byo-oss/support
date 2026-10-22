@@ -1,0 +1,58 @@
+---
+title: Lifecycle
+description: What support cleans up when users, members and organizations are deleted, how to turn the cleanup off, and the functions to call for deletes made outside the organization plugin.
+group: guides
+order: 6
+---
+
+## Organization deletes and member removals
+
+Support cleans up after the organization plugin's own endpoints, with no wiring. After `/organization/delete`, it deletes that organization's tickets. After `/organization/remove-member` and `/organization/leave`, it unassigns the member's tickets if they left the staff organization. In a customer organization nothing changes: teammate access is checked live, and requesters keep their own tickets. A hook acts only when the endpoint succeeded, takes ids only from the response, and logs errors without failing the request.
+
+`organizationCleanup: false` turns the row cleanup off, for apps that keep history. On memory and MongoDB that keeps the organization's tickets. On SQL the `organizationId` foreign key still cascades the ticket rows away. The blobs under `support/<orgId>/` are always removed when an organization is deleted, because cascaded tickets leave no row that points at them.
+
+## Deletes made any other way
+
+For deletes made any other way (a script, an admin tool, a direct database write), call the functions yourself. They run inside a better-auth transaction (`runWithTransaction`) when called in one, and they are safe to run again:
+
+```ts
+import {
+  deleteMemberData,
+  deleteOrganizationData,
+  deleteSupportRequesterData,
+  linkSupportRequester,
+} from "@byo-oss/support";
+
+await deleteOrganizationData(auth, organizationId); // → { tickets }, and deletes the support/<orgId>/ blobs
+await deleteMemberData(auth, { userId, organizationId }); // → { unassigned }
+await deleteSupportRequesterData(auth, { email }); // → { tickets, messages }
+await linkSupportRequester(auth, userId); // → { tickets, messages }
+```
+
+## The cases
+
+- **A user is deleted.** Foreign keys null `userId` (requester, author, uploader) and `assigneeId` on SQL. A `user.delete` hook does the same on adapters without them (memory, MongoDB), and clears any stored copy of their email. A user deleted outside better-auth keeps those email copies until `deleteSupportRequesterData` runs for the address. On every adapter, the hook also removes their id from message `mentions` and sets it to null in `assignee` event rows (`from` and `to`), which no foreign key reaches. It pages through every agent-authored message to do so, so a user delete costs time in proportion to that table. A user deleted outside better-auth keeps their id in mentions and assignee events, and no exported function removes it.
+- **An account-less person** (someone who only emailed) asks to be erased. `deleteSupportRequesterData` deletes their tickets with all their messages, tags and attachments, and anonymizes their messages on other tickets.
+- **An organization is removed outside the organization plugin.** It leaves its blobs behind until `deleteOrganizationData` runs.
+- **With `@byo-oss/core`,** the fan-out reaches support through its `byo` hooks, so one call cleans every BYO plugin:
+
+  ```ts title="lib/auth.ts"
+  import { deleteMemberData, deleteOrganizationData } from "@byo-oss/core";
+
+  organization({
+    organizationHooks: {
+      afterDeleteOrganization: async ({ organization }) => {
+        await deleteOrganizationData(auth, organization.id);
+      },
+      afterRemoveMember: async ({ member }) => {
+        await deleteMemberData(auth, { userId: member.userId, organizationId: member.organizationId });
+      },
+    },
+  });
+  ```
+
+  Running this next to support's automatic hooks is safe. Add it for the other plugins' sake, and for deletes the endpoint hooks don't see.
+
+## Uninstalling
+
+To remove support, see [Uninstall](/docs/support/uninstall).

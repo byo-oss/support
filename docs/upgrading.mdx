@@ -1,0 +1,42 @@
+---
+title: Upgrading
+description: What changed in each release of @byo-oss/support, newest first, with the steps to take when you move up.
+group: get started
+order: 3
+---
+
+Each section covers one release, newest first. Read the sections between your current version and the latest. The docs describe the latest published release. Sections marked next describe main, which isn't published yet.
+
+## 0.3.0
+
+Upgrading from 0.2.0 needs no migration. The schema didn't change, and the package's peer dependencies are the same. Three things change for users.
+
+- **Category cards are on by default.** The widget's New ticket form, and its empty list, now show a card per kind of support: "Ask a question", "Report a bug", "Suggest a feature" and "Talk to us". A new ticket gets the chosen kind as a tag, and the tag is set before `support.ticket.created` fires. To keep the form as it was, set `categories: false`:
+
+  ```ts title="lib/auth.ts"
+  support({ staffOrganizationId, categories: false });
+  ```
+
+  The create endpoint accepts a `category` and answers 400 `INVALID_CATEGORY` for a kind that isn't offered. The list responses add `features.categories`.
+
+- **Default wording changed.** The widget names statuses in the customer's words: "With our team" for open, and "Awaiting your reply" for pending. Before, it showed "Open" and "Pending". Solved and Closed are unchanged. To keep the old names, set them in the components' `labels.customerStatus` prop:
+
+  ```tsx
+  <SupportWidget labels={{ customerStatus: { open: "Open", pending: "Pending" } }} />
+  ```
+
+  The inbox's "Status after sending" select is replaced by a Send and solve button and a send menu with Send and keep open and Send and close. Attach and Mention are now icon buttons with accessible labels. No label key was renamed or removed, and the new keys have English defaults.
+
+- **New inbox behaviour, on by default.** Keyboard shortcuts (j, k, /, r, n, e, ?) are on, and each agent can turn them off from the `?` sheet. Drafts are kept per ticket while the inbox is mounted. Queue rows show how long a customer has waited on an open ticket. The agent queue filters by `requesterId` and `requesterEmail`, and `useSupportQueue` takes the same filters.
+
+## 0.2.0
+
+Upgrading from 0.1.0 has two changes.
+
+- **Events fire after the write commits.** `onEvent` used to run as soon as its write returned, even inside the caller's transaction. Endpoint writes don't join a caller's transaction, so their events still follow at once. Writes made inside `runWithTransaction` now queue their events until the transaction commits, and drop them if it rolls back. If your handler assumed it ran before commit, check that assumption. See [Events](/docs/support/events#when-an-event-fires).
+
+- **`@better-auth/core` is a new required peer.** Install it at the same version as `better-auth`. better-auth already depends on it, so this only matters when your package manager is strict about peers.
+
+  ```sh
+  npm install @better-auth/core
+  ```
