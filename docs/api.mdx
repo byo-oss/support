@@ -95,7 +95,7 @@ From `@byo-oss/support/wraps`: `wrapsMailer` and `wrapsInbound`. From `@byo-oss/
 | `ATTACHMENT_NOT_USABLE` | 400 | An id in `attachmentIds` failed the binding rules |
 | `ATTACHMENT_NOT_FOUND` | 404 | The attachment or its blob is missing, or this caller can't read it |
 | `NOT_AN_AGENT` | 400 | An assignee or a mention that fails `isAgent` |
-| `INVALID_CURSOR` | 400 | A malformed cursor |
+| `INVALID_CURSOR` | 400 | A malformed cursor, or more than 200 cursor ids |
 | `INVALID_TAG` | 400 | A tag that is empty, too long or has characters outside `a-z0-9_-` |
 | `INVALID_CATEGORY` | 400 | A `category` on `create-ticket` that isn't one of the server's `categories` |
 | `CANNED_REPLY_NOT_FOUND` | 404 | Saving a canned reply with an unknown `id` |

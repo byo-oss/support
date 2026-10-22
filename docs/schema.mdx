@@ -7,7 +7,7 @@ order: 3
 
 Support creates these tables. They are a public contract: a change that breaks reading existing rows is a major release. Rename tables or fields with the `schema` option. Nothing is added to better-auth's own tables (`user`, `organization`, `member`). Emails are stored lowercased.
 
-The plugin declares indexes on the fields it filters by: `organizationId`, `userId`, `assigneeId`, `ticketId`, `tag`, `status`, `lastMessageAt`, `requesterEmail`, `authorEmail`, delivery `status` and `scheduledFor`, and the message and attachment `createdAt`. Don't query or write these tables from app code. Go through `auth.api.*`, the hooks and the exported functions.
+The plugin declares indexes on the fields it filters by: `organizationId`, `userId`, `assigneeId`, `mergedIntoId`, `ticketId`, `messageId`, `tag`, `status`, `lastMessageAt`, `requesterEmail`, `authorEmail`, delivery `status` and `scheduledFor`, and the message and attachment `createdAt`.
 
 Which tables you get depends on your options: `supportDelivery` appears once you set `mailer`, and `supportAttachment` once you set `attachments`. Run the migration again after you turn either on. A generated schema (drizzle or prisma through the better-auth CLI) only has them if the auth config the CLI loads passes `mailer` and `attachments` the way production does.
 
