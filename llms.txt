@@ -4,7 +4,7 @@ Customer support as a better-auth plugin. Tickets, messages, internal notes, can
 
 ## Install & wire
 
-npm install @byo-oss/support   // peers: better-auth ^1.7.7 (not 1.6), zod ^4.0.0 (the app's copy is used; npm/pnpm install a missing peer, Yarn doesn't); optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
+npm install @byo-oss/support   // peers: better-auth ^1.7.7 (not 1.6), @better-auth/core (same version as better-auth), zod ^4.0.0 (the app's copy is used; npm/pnpm install a missing peer, Yarn doesn't); optional: @wraps.dev/email (wrapsMailer), @aws-sdk/client-s3 (s3Storage, wrapsInbound), react (>=18)
 
 // lib/access.ts: spread the statements and grant them to staff roles. Import from /client (browser-safe; the root also exports them but loads mail parsing)
 import { createAccessControl } from "better-auth/plugins/access";
@@ -56,7 +56,7 @@ mailer: Mailer                                  // @byo-oss/mailer; needs email;
 email: { from, replyDomain, appUrl, ticketPath?: (id) => string /* default `/support/${id}`; set it if that collides with your routes (e.g. top-level /:org) */, replyDelay?: number /* ms, 120000; 0 = at once */, requireVerifiedEmail?: boolean /* true */ }  // required with mailer and with inbound
 inbound: { source: SupportInboundSource, newTickets?: true, maxPerSenderPerHour?: 20, maxUnverifiedPerHour?: 100, maxBytes?: 26214400, resolver?: DkimResolver /* DNS TXT for DKIM, for tests and custom DNS; default system DNS */ }  // needs email
 attachments: { storage: SupportStorage, maxBytes?: 10485760, allowedTypes?: string[] }  // adds supportAttachment; HTML/SVG/XHTML refused at boot
-onEvent: (event: ByoEvent) => void | Promise<void>  // errors logged, never thrown
+onEvent: (event: ByoEvent) => void | Promise<void>  // after the write commits; errors logged, never thrown
 organizationCleanup: true                       // clean up after /organization/delete, /remove-member, /leave
 autoCloseAfter: 604800000                       // ms; sweep closes solved tickets
 maxAttempts: 5, batchSize: 100, leaseMs: 300000, pageSize: 25 (1-50)
@@ -146,6 +146,7 @@ await linkSupportRequester(auth, userId)                  // → { tickets, mess
 
 import { createEventBus } from "@byo-oss/core";
 support({ onEvent: createEventBus([async (event): Promise<void> => { /* route */ }]) })
+// Events fire after the write commits. Endpoint writes don't join a caller's transaction, so their events follow at once; sweepAll inside your runWithTransaction holds the sweep's support.ticket.status_changed events until it commits and drops them on rollback. Join with runWithTransaction, imported from @better-auth/core/context (better-auth doesn't export it). A plain adapter.transaction(trx => …) isn't joined at all, so the plugin's writes commit at once along with their events; wrapping with runWithAdapter(trx, …) makes them join, but their events fire before the commit. Pass { onAfterCommitHookError } to your runWithTransaction so an earlier after-commit hook that throws can't skip later events. Adapters without transactions fire at once.
 // ByoEvent: { type, occurredAt, actorId, userId?, organizationId?, subject: { type: "supportTicket", id }, data }. In-process, best-effort, no bodies in data. Every data also has visibility ("private"|"organization"): private tickets' events still carry organizationId, so org fan-out must skip visibility "private".
 // support.ticket.created      userId requester   { ticketId, number, channel }
 // support.ticket.status_changed userId requester { ticketId, from, to }

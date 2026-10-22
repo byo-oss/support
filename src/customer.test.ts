@@ -523,6 +523,8 @@ describe("getSupportTicket and replyToSupportTicket (J2)", () => {
   it("shows the customer timeline oldest first, never notes or other events", async () => {
     const { ticket } = await create(w.customer, { body: "First" });
     await backdateSeen(ticket.id);
+    // two replies in the same millisecond tie on createdAt and kind, then sort by random id
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await agentMessage(ticket.id, {
       kind: "note",
       body: "internal-note-secret",

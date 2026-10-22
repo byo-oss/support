@@ -1,6 +1,6 @@
 {
   "name": "@byo-oss/support",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A better-auth plugin for customer support: tickets, replies and attachments in your own database.",
   "license": "MIT",
   "author": "Jarod Stewart",
@@ -79,6 +79,7 @@
   },
   "peerDependencies": {
     "@aws-sdk/client-s3": ">=3",
+    "@better-auth/core": "^1.7.7",
     "@wraps.dev/email": ">=0.15.0",
     "better-auth": "^1.7.7",
     "react": ">=18",

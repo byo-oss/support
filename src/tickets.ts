@@ -170,7 +170,7 @@ export async function createTicket(
   }
 
   await emit(
-    rt.opts,
+    rt,
     ticketEvent("support.ticket.created", ticket, {
       actorId: input.actorId,
       userId: ticket.userId,
@@ -180,7 +180,6 @@ export async function createTicket(
         channel: ticket.channel,
       },
     }),
-    rt.context.logger,
   );
   return { ticket, message };
 }
@@ -305,47 +304,42 @@ export async function addMessage(
     });
   }
 
-  const logger = rt.context.logger;
   const ids = { ticketId: ticket.id, messageId: message.id };
   if (authorType === "customer" && isReply) {
     await emit(
-      rt.opts,
+      rt,
       ticketEvent("support.customer.replied", ticket, {
         actorId: input.actorId,
         userId: ticket.userId,
         data: { ...ids, channel: input.channel },
       }),
-      logger,
     );
   } else if (agentMessage && isReply) {
     await emit(
-      rt.opts,
+      rt,
       ticketEvent("support.agent.replied", ticket, {
         actorId: input.actorId,
         userId: ticket.userId,
         data: { ...ids, status: ticket.status },
       }),
-      logger,
     );
   } else if (agentMessage) {
     await emit(
-      rt.opts,
+      rt,
       ticketEvent("support.note.added", ticket, {
         actorId: input.actorId,
         data: ids,
       }),
-      logger,
     );
   }
   for (const mentioned of mentions) {
     await emit(
-      rt.opts,
+      rt,
       ticketEvent("support.agent.mentioned", ticket, {
         actorId: input.actorId,
         userId: mentioned,
         data: { ...ids, kind },
       }),
-      logger,
     );
   }
   return { message, ticket };
@@ -406,13 +400,12 @@ export async function applyStatus(
 
   const next = updated ?? { ...ticket, ...patch };
   await emit(
-    rt.opts,
+    rt,
     ticketEvent("support.ticket.status_changed", next, {
       actorId: input.actorId,
       userId: next.userId,
       data: { ticketId: next.id, from, to },
     }),
-    rt.context.logger,
   );
   return next;
 }

@@ -2,17 +2,21 @@
 // `ByoEvent`, carries no message bodies, never fails a request, and reaches
 // an app's `@byo-oss/notifications` inbox through `createEventBus`.
 
+import { runWithTransaction } from "@better-auth/core/context";
 import { getAuthTables } from "@better-auth/core/db";
 import { type MemoryDB, memoryAdapter } from "@better-auth/memory-adapter";
 import {
   type ByoEvent,
   type ByoEventHandler,
   createEventBus,
+  sweepAll,
 } from "@byo-oss/core";
 import { inbox } from "@byo-oss/notifications";
 import { betterAuth } from "better-auth";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { authRuntime, type SupportRuntime } from "./adapter";
 import {
+  emit,
   SUPPORT_EVENT_TYPES,
   type SupportEvent,
   type SupportEventType,
@@ -20,6 +24,8 @@ import {
 import { type SupportOptions, support } from "./index";
 import {
   createTestAuth,
+  getContext,
+  insertTicket,
   mergeAuthOptions,
   STAFF_ORG_ID,
   seedSupportWorld,
@@ -616,5 +622,256 @@ describe("routing events to @byo-oss/notifications", () => {
       "support.agent.mentioned",
     ]);
     expect(JSON.stringify(agentInbox)).not.toContain("refund policy");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// After commit: an event fires once the write it describes is durable
+// ---------------------------------------------------------------------------
+
+describe("after commit", () => {
+  const DAY = 24 * 60 * 60_000;
+  const sample: SupportEvent = {
+    type: "support.ticket.created",
+    occurredAt: new Date(),
+    actorId: null,
+    subject: { type: "supportTicket", id: "t1" },
+    data: { ticketId: "t1", visibility: "private" },
+  };
+
+  /** A runtime whose handler logs `"handler"`, and the logs it wrote. */
+  async function harness(onEvent?: ByoEventHandler) {
+    const log: string[] = [];
+    const errors: string[] = [];
+    const auth = createTestAuth(
+      {
+        staffOrganizationId: STAFF_ORG_ID,
+        onEvent:
+          onEvent ??
+          (() => {
+            log.push("handler");
+          }),
+      },
+      {
+        authOptions: {
+          logger: {
+            level: "error",
+            log: (_level, message) => void errors.push(message),
+          },
+        },
+      },
+    );
+    const context = await getContext(auth);
+    // the base adapter, as an endpoint sees it
+    const base = await authRuntime(auth, "after-commit.test");
+    // inside runWithTransaction, authRuntime resolves the transaction adapter
+    const joined = () => authRuntime(auth, "after-commit.test");
+    return { auth, context, base, joined, log, errors };
+  }
+
+  it("(a) drops a joined event when the transaction rolls back", async () => {
+    const h = await harness();
+    await expect(
+      runWithTransaction(h.context.adapter, async () => {
+        const rt = await h.joined();
+        expect(rt.adapter).not.toBe(h.context.adapter);
+        await emit(rt, sample);
+        h.log.push("fn-end");
+        throw new Error("caller failed");
+      }),
+    ).rejects.toThrow("caller failed");
+    expect(h.log).toEqual(["fn-end"]);
+  });
+
+  it("(b) runs a joined event once, after the transaction resolves", async () => {
+    const h = await harness();
+    await runWithTransaction(h.context.adapter, async () => {
+      await emit(await h.joined(), sample);
+      h.log.push("fn-end");
+      expect(h.log).toEqual(["fn-end"]);
+    });
+    expect(h.log).toEqual(["fn-end", "handler"]);
+  });
+
+  it("(c) runs a base-adapter event before emit resolves, with no transaction", async () => {
+    const h = await harness();
+    expect(h.base.adapter).toBe(h.context.adapter);
+    await emit(h.base, sample);
+    h.log.push("returned");
+    expect(h.log).toEqual(["handler", "returned"]);
+  });
+
+  it("(c) runs a base-adapter event at once even inside a rolled-back transaction", async () => {
+    const h = await harness();
+    await expect(
+      runWithTransaction(h.context.adapter, async () => {
+        await emit(h.base, sample);
+        h.log.push("fn-end");
+        throw new Error("caller failed");
+      }),
+    ).rejects.toThrow("caller failed");
+    expect(h.log).toEqual(["handler", "fn-end"]);
+  });
+
+  const failing: [string, ByoEventHandler][] = [
+    [
+      "throws synchronously",
+      () => {
+        throw new Error("consumer exploded");
+      },
+    ],
+    [
+      "rejects",
+      async () => {
+        throw new Error("consumer rejected");
+      },
+    ],
+  ];
+
+  describe.each(failing)("(d) a handler that %s", (_name, onEvent) => {
+    it("resolves outside a transaction and logs once", async () => {
+      const h = await harness(onEvent);
+      await expect(emit(h.base, sample)).resolves.toBeUndefined();
+      expect(h.errors.filter((m) => m.includes("onEvent failed"))).toHaveLength(
+        1,
+      );
+    });
+
+    it("resolves a rolled-back transaction's caller and never runs", async () => {
+      const h = await harness(onEvent);
+      await expect(
+        runWithTransaction(h.context.adapter, async () => {
+          await emit(await h.joined(), sample);
+          throw new Error("caller failed");
+        }),
+      ).rejects.toThrow("caller failed");
+      expect(h.errors.filter((m) => m.includes("onEvent failed"))).toEqual([]);
+    });
+
+    it("does not make a committed transaction reject, and logs once", async () => {
+      const h = await harness(onEvent);
+      await expect(
+        runWithTransaction(h.context.adapter, async () => {
+          await emit(await h.joined(), sample);
+          return "done";
+        }),
+      ).resolves.toBe("done");
+      expect(h.errors.filter((m) => m.includes("onEvent failed"))).toHaveLength(
+        1,
+      );
+    });
+
+    it("also survives a logger that throws", async () => {
+      const h = await harness(onEvent);
+      const broken = (rt: SupportRuntime): SupportRuntime => ({
+        ...rt,
+        context: {
+          ...rt.context,
+          logger: {
+            ...rt.context.logger,
+            error: () => {
+              throw new Error("logger exploded");
+            },
+          },
+        },
+      });
+      await expect(emit(broken(h.base), sample)).resolves.toBeUndefined();
+      await expect(
+        runWithTransaction(h.context.adapter, async () => {
+          await emit(broken(await h.joined()), sample);
+          return "done";
+        }),
+      ).resolves.toBe("done");
+    });
+  });
+
+  it("(e) createSupportTicket in a rolled-back transaction keeps the ticket and delivers its event", async () => {
+    const s = await setup();
+    const { adapter } = await getContext(s.auth);
+    await expect(
+      runWithTransaction(adapter, async () => {
+        await s.auth.api.createSupportTicket({
+          body: { subject: "Hello", body: "World" },
+          headers: s.world.customer.headers,
+        });
+        throw new Error("caller failed");
+      }),
+    ).rejects.toThrow("caller failed");
+    // endpoint writes use the base adapter, so they don't join the caller's
+    // transaction: the row stays and its event fired at once
+    expect(ofType(s.events, "support.ticket.created")).toHaveLength(1);
+    expect(
+      await adapter.count({
+        model: "supportTicket",
+        where: [{ field: "subject", value: "Hello" }],
+      }),
+    ).toBe(1);
+  });
+
+  describe("(f) sweepAll's auto-close", () => {
+    async function solvedPastClose() {
+      const log: string[] = [];
+      const events: ByoEvent[] = [];
+      const auth = createTestAuth({
+        staffOrganizationId: STAFF_ORG_ID,
+        autoCloseAfter: 7 * DAY,
+        onEvent: (event) => {
+          events.push(event);
+          log.push("handler");
+        },
+      });
+      await seedSupportWorld(auth);
+      const ticket = await insertTicket(auth, {
+        status: "solved",
+        solvedAt: new Date(Date.now() - 8 * DAY),
+      });
+      const { adapter } = await getContext(auth);
+      const status = async () =>
+        (
+          await adapter.findOne<{ status: string }>({
+            model: "supportTicket",
+            where: [{ field: "id", value: ticket.id }],
+          })
+        )?.status;
+      return { auth, adapter, events, log, status };
+    }
+
+    it("drops the event and keeps the ticket solved when fn throws after sweepAll", async () => {
+      const t = await solvedPastClose();
+      await expect(
+        runWithTransaction(t.adapter, async () => {
+          // sweepAll swallows plugin errors, so the throw comes from fn
+          const swept = await sweepAll(t.auth);
+          expect(swept.results[0]?.error).toBeUndefined();
+          expect(swept.results[0]?.last).toMatchObject({ closed: 1 });
+          t.log.push("fn-end");
+          throw new Error("caller failed");
+        }),
+      ).rejects.toThrow("caller failed");
+      expect(ofType(t.events, "support.ticket.status_changed")).toEqual([]);
+      expect(t.log).toEqual(["fn-end"]);
+      expect(await t.status()).toBe("solved");
+    });
+
+    it("holds the event until the commit, then delivers exactly one", async () => {
+      const t = await solvedPastClose();
+      await runWithTransaction(t.adapter, async () => {
+        await sweepAll(t.auth);
+        t.log.push("fn-end");
+        expect(t.events).toHaveLength(0);
+      });
+      expect(t.log).toEqual(["fn-end", "handler"]);
+      const changed = ofType(t.events, "support.ticket.status_changed");
+      expect(changed).toHaveLength(1);
+      expect(changed[0]?.data).toMatchObject({ from: "solved", to: "closed" });
+      expect(await t.status()).toBe("closed");
+    });
+
+    it("still fires at once for a sweep outside a transaction", async () => {
+      const t = await solvedPastClose();
+      await sweepAll(t.auth);
+      expect(ofType(t.events, "support.ticket.status_changed")).toHaveLength(1);
+      expect(await t.status()).toBe("closed");
+    });
   });
 });

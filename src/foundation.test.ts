@@ -1,8 +1,10 @@
 import { runWithTransaction } from "@better-auth/core/context";
 import { getAuthTables } from "@better-auth/core/db";
+import type { ByoEventHandler } from "@byo-oss/core";
 import { memoryMailer } from "@byo-oss/mailer";
 import { betterAuth } from "better-auth";
 import { describe, expect, it, vi } from "vitest";
+import type { SupportRuntime } from "./adapter";
 import {
   authRuntime,
   chunk,
@@ -947,16 +949,30 @@ describe("events", () => {
       visibility: "organization",
     });
     const errors: unknown[] = [];
+    const adapter = {} as SupportRuntime["adapter"];
+    const rtFor = (onEvent?: ByoEventHandler) =>
+      ({
+        adapter,
+        context: {
+          adapter,
+          logger: { error: (...a: unknown[]) => errors.push(a) },
+        },
+        opts: { onEvent },
+      }) as unknown as SupportRuntime;
     await expect(
-      emit({ onEvent: () => Promise.reject(new Error("boom")) }, event, {
-        error: (...a) => errors.push(a),
-      }),
+      emit(
+        rtFor(() => Promise.reject(new Error("boom"))),
+        event,
+      ),
     ).resolves.toBeUndefined();
     expect(errors).toHaveLength(1);
     const seen: unknown[] = [];
-    await emit({ onEvent: (e) => void seen.push(e) }, event);
+    await emit(
+      rtFor((e) => void seen.push(e)),
+      event,
+    );
     expect(seen).toEqual([event]);
-    await expect(emit({}, event)).resolves.toBeUndefined();
+    await expect(emit(rtFor(), event)).resolves.toBeUndefined();
   });
 });
 

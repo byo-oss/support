@@ -231,13 +231,12 @@ export function mergeEndpoints(opts: ResolvedSupportOptions) {
         await event(closed, { type: "merged", to: target.id });
 
         await emit(
-          opts,
+          rt,
           ticketEvent("support.ticket.merged", merged, {
             actorId,
             userId: merged.userId,
             data: { ticketId: merged.id, sourceId: source.id, targetId },
           }),
-          rt.context.logger,
         );
 
         const fresh =
