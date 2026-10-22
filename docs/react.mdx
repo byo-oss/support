@@ -100,7 +100,7 @@ The components poll. There are no websockets, and while the tab is hidden nothin
 
 ## Labels, wording and sizes
 
-Every string has a `labels` override. The default copy never says "agent" or "inbox", which apps often use for their own AI agents and inbox. The staff view's heading is "Support queue". A reply from staff without a name shows as "Support". The message of `NOT_AN_AGENT` says "That user is not on the support team".
+Every string has a `labels` override. The default copy never says "agent" or "inbox", which apps often use for their own AI agents and inbox. The staff view's heading is "Support queue". In the customer widget, a reply from staff without a name shows as "Support". The message of `NOT_AN_AGENT` says "That user is not on the support team".
 
 The API keeps "agent" as the name of the staff role: `SupportInbox` and its `agents` prop, the `/support/agent/*` endpoints, `isAgent`, `NOT_AN_AGENT`, `authorType: "agent"` and the `support.agent.*` events. Rename anything on screen with `labels`.
 

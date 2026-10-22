@@ -9,7 +9,7 @@ Support emits an event after every write that matters, through `onEvent`. Events
 
 ## When an event fires
 
-Events fire after the write commits. Endpoint writes don't join a caller's transaction, so their events follow at once. `sweepAll` inside your `runWithTransaction` holds the sweep's `support.ticket.status_changed` events until it commits, and drops them on rollback.
+Events fire after the write commits. Endpoint writes don't join a caller's transaction, so their events follow at once. `sweepAll` from `@byo-oss/core`, run inside your `runWithTransaction`, holds the sweep's `support.ticket.status_changed` events until it commits, and drops them on rollback.
 
 Join a transaction with `runWithTransaction`, imported from `@better-auth/core/context` (`better-auth` doesn't export it). A plain `adapter.transaction(trx => …)` isn't joined at all, so the plugin's writes commit at once along with their events. Wrapping with `runWithAdapter(trx, …)` makes them join, but their events fire before the commit, so use `runWithTransaction`. On an adapter without transactions, the events fire at once. If you call `runWithTransaction` yourself, pass `{ onAfterCommitHookError }`, so a hook queued earlier in the same transaction that throws can't skip the events queued after it.
 

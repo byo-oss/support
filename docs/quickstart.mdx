@@ -13,7 +13,7 @@ This takes an existing better-auth app to customers opening and following ticket
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer, `better-auth` 1.7.7 or newer (1.6 is not supported: its plugin API differs), `@better-auth/core` at the same version as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy. An app still on zod 3 has to move to zod 4 first. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20 or newer, `better-auth` 1.7.7 or newer (1.6 is not supported: its plugin API differs), `@better-auth/core` within the same version range as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy. An app still on zod 3 has to move to zod 4 first. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 

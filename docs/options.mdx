@@ -39,7 +39,7 @@ order: 2
 | `batchSize` | number | `100` | Deliveries per sweep (and tickets auto-closed per sweep) |
 | `leaseMs` | number (ms) | `300000` (5 min) | A claimed delivery older than this is presumed dead and retried |
 | `pageSize` | number | `25` | Tickets per list page, 1 to 50 |
-| `categories` | string[] \| `false` | `["question", "bug", "feature", "sales"]` | The kinds of support the widget offers as cards when a customer opens a ticket. The pick is stored as a tag on the ticket, so agents filter by it like any tag. Each must be a tag (`a-z0-9_-`, 1 to 50 characters). `false` or `[]`: no cards, and `create-ticket` refuses a `category` |
+| `categories` | string[] \| `false` | `["question", "bug", "feature", "sales"]` | The kinds of support the widget offers as cards when a customer opens a ticket. The pick is stored as a tag on the ticket, so agents filter by it like any tag. Each must be a tag (`a-z0-9_-`, 1 to 50 characters, after trimming and lowercasing). `false` or `[]`: no cards, and `create-ticket` refuses a `category` |
 | `schema` | | | Rename tables and fields. See [Schema](/docs/support/schema) |
 
 ## Categories
@@ -66,7 +66,7 @@ Boot validation throws an error for a combination that can't work. The message b
 - a whole-number option that isn't one, or is below its minimum: 0 for `autoCloseAfter`, `inbound.maxPerSenderPerHour` and `inbound.maxUnverifiedPerHour`, and 1 for `maxAttempts`, `batchSize`, `leaseMs`, `pageSize`, `inbound.maxBytes` and `attachments.maxBytes`;
 - `allowedTypes` containing `text/html`, `image/svg+xml` or `application/xhtml+xml`.
 
-A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`. `rawRelay` and `wrapsInbound` also throw at boot for a secret or key with leading or trailing whitespace (see [Email](/docs/support/email#inbound-email)).
+A missing `organization()` plugin throws an `Error` whose message contains `ORGANIZATION_PLUGIN_REQUIRED`. `rawRelay` throws at boot for a secret that contains any whitespace, and `wrapsInbound` for a key with leading or trailing whitespace (see [Email](/docs/support/email#inbound-email)).
 
 ## Provider interfaces
 
