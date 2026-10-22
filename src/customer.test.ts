@@ -504,12 +504,18 @@ describe("listMySupportTickets (J1)", () => {
   });
 
   it("reports features.attachments false without the attachments option", async () => {
-    expect((await list(w.customer)).features).toEqual({ attachments: false });
+    expect((await list(w.customer)).features).toEqual({
+      attachments: false,
+      categories: ["question", "bug", "feature", "sales"],
+    });
   });
 
   it("reports features.attachments true with the attachments option", async () => {
     await setup({ attachments: { storage: fakeStorage } });
-    expect((await list(w.customer)).features).toEqual({ attachments: true });
+    expect((await list(w.customer)).features).toEqual({
+      attachments: true,
+      categories: ["question", "bug", "feature", "sales"],
+    });
   });
 });
 
@@ -1136,5 +1142,70 @@ describe("ticket-id endpoints follow mergedIntoId", () => {
       updateMine(w.teammate, source.id, { rating: "good" }),
     ).rejects.toEqual(notFound);
     await expect(markSeen(w.teammate, source.id)).rejects.toEqual(notFound);
+  });
+});
+
+describe("createSupportTicket: category", () => {
+  async function tagsOf(ticketId: string): Promise<string[]> {
+    const { adapter } = await getContext(auth);
+    const rows = await adapter.findMany<{ tag: string }>({
+      model: "supportTicketTag",
+      where: [{ field: "ticketId", value: ticketId }],
+      limit: 100,
+    });
+    return rows.map((r) => r.tag).sort();
+  }
+  const createWith = (category: string) =>
+    auth.api.createSupportTicket({
+      body: { subject: "Help", body: "It broke", category },
+      headers: w.customer.headers,
+    });
+
+  it("stores the category as a tag before support.ticket.created", async () => {
+    let tagsAtEvent: string[] | null = null;
+    await setup({
+      onEvent: async (event) => {
+        if (event.type !== "support.ticket.created") return;
+        tagsAtEvent = await tagsOf(
+          (event.data as { ticketId: string }).ticketId,
+        );
+      },
+    });
+    const { ticket } = await createWith(" Bug ");
+    expect(await tagsOf(ticket.id)).toEqual(["bug"]);
+    expect(tagsAtEvent).toEqual(["bug"]);
+  });
+
+  it("refuses a category the server doesn't offer with INVALID_CATEGORY", async () => {
+    await setup();
+    await expect(createWith("billing")).rejects.toMatchObject(
+      error("BAD_REQUEST", SUPPORT_ERROR_CODES.INVALID_CATEGORY),
+    );
+    expect((await list(w.customer)).tickets).toEqual([]);
+  });
+
+  it("offers the app's categories, normalized, or none with false", async () => {
+    await setup({ categories: ["Billing", "bug", "billing"] });
+    expect((await list(w.customer)).features.categories).toEqual([
+      "billing",
+      "bug",
+    ]);
+    const { ticket } = await createWith("billing");
+    expect(await tagsOf(ticket.id)).toEqual(["billing"]);
+
+    await setup({ categories: false });
+    expect((await list(w.customer)).features.categories).toEqual([]);
+    await expect(createWith("bug")).rejects.toMatchObject(
+      error("BAD_REQUEST", SUPPORT_ERROR_CODES.INVALID_CATEGORY),
+    );
+  });
+
+  it("refuses at boot a category that isn't a tag", () => {
+    expect(() =>
+      createTestAuth({
+        staffOrganizationId: STAFF_ORG_ID,
+        categories: ["needs help"],
+      }),
+    ).toThrow(/category "needs help" is not a tag/);
   });
 });

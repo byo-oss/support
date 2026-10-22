@@ -3,10 +3,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupportFetchClient, WireAgentMessage } from "../hooks";
 import { useSupportQueue } from "../hooks";
 import { defaultLabels, type SupportLabels } from "../labels";
+import { Icon } from "../ui";
+import type { ComposerCommands, ComposerDrafts } from "./composer";
 import { defaultInboxLabels, type SupportInboxLabels } from "./labels";
 import { cx } from "./primitives";
 import { type QueueFilters, QueuePane } from "./queue";
-import { ThreadPane } from "./thread";
+import {
+  ShortcutsDialog,
+  useInboxShortcuts,
+  useShortcutsSetting,
+} from "./shortcuts";
+import { type ThreadActions, ThreadPane } from "./thread";
 import type { InboxLabels, SupportAgent } from "./types";
 
 export type { SupportAgent } from "./types";
@@ -156,6 +163,21 @@ export function SupportInbox({
     setOpenId(next);
   }, [ticketId]);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  // unsent text by ticket: opening another ticket and coming back keeps it
+  const drafts = useRef<ComposerDrafts>(new Map()).current;
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const commandsRef = useRef<ComposerCommands | null>(null);
+  const actionsRef = useRef<ThreadActions | null>(null);
+  const [keysOn, setKeysOn] = useShortcutsSetting();
+  const [helpOpen, setHelpOpen] = useState(false);
+  useInboxShortcuts({
+    rootRef,
+    enabled: keysOn,
+    onHelp: () => setHelpOpen(true),
+    commandsRef,
+    actionsRef,
+  });
 
   // the live region sits at the root: on narrow screens the queue is hidden
   // while a thread is open, and a hidden region is never announced
@@ -169,14 +191,24 @@ export function SupportInbox({
 
   return (
     <div
+      ref={rootRef}
       className={cx(
-        "flex min-h-[28rem] w-full min-w-0 flex-col rounded-lg border border-border bg-background text-foreground md:flex-row",
+        "flex h-full min-h-[28rem] w-full min-w-0 flex-col rounded-lg border border-border bg-background text-foreground md:flex-row",
         className,
       )}
     >
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
+      {helpOpen ? (
+        <ShortcutsDialog
+          labels={labels}
+          enabled={keysOn}
+          onEnabledChange={setKeysOn}
+          onClose={() => setHelpOpen(false)}
+          buttonClassName={buttonClassName}
+        />
+      ) : null}
       <QueuePane
         queue={queue}
         labels={labels}
@@ -189,6 +221,7 @@ export function SupportInbox({
         onOpenTicket={select}
         checked={checked}
         onCheckedChange={setChecked}
+        onShortcuts={() => setHelpOpen(true)}
         onDeleted={(ids) => {
           // a deleted ticket must not stay on screen with a live composer;
           // read at resolve time: the agent may have opened another meanwhile
@@ -206,7 +239,7 @@ export function SupportInbox({
         fieldClassName={fieldClassName}
         className={cx(
           openId ? "hidden md:flex" : "flex",
-          "w-full border-b border-border md:w-80 md:shrink-0 md:border-b-0 md:border-r",
+          "w-full min-h-0 flex-1 border-b border-border md:w-80 md:flex-none md:shrink-0 lg:w-[22rem] md:border-b-0 md:border-r",
           queueClassName,
         )}
       />
@@ -233,6 +266,9 @@ export function SupportInbox({
             if (openIdRef.current === sourceId) select(targetId);
           }}
           onResolved={onResolved}
+          drafts={drafts}
+          commandsRef={commandsRef}
+          actionsRef={actionsRef}
           className={cx("flex-1", threadClassName)}
           messageClassName={messageClassName}
           composerClassName={composerClassName}
@@ -242,10 +278,13 @@ export function SupportInbox({
       ) : (
         <div
           className={cx(
-            "hidden flex-1 items-center justify-center p-6 text-sm text-muted-foreground md:flex",
+            "hidden flex-1 flex-col items-center justify-center gap-3 bg-muted/20 p-6 text-sm text-muted-foreground md:flex",
             threadClassName,
           )}
         >
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted">
+            <Icon name="message" className="size-5" />
+          </span>
           {labels.selectPrompt}
         </div>
       )}

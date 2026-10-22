@@ -29,6 +29,7 @@ export const SUPPORT_ERROR_CODES = defineErrorCodes({
     "Tags are 1 to 50 characters of lowercase letters, digits, - and _",
   CANNED_REPLY_NOT_FOUND: "Canned reply not found",
   ATTACHMENT_NOT_FOUND: "Attachment not found",
+  INVALID_CATEGORY: "That kind of support is not offered",
 });
 
 export type SupportErrorCode = keyof typeof SUPPORT_ERROR_CODES;

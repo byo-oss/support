@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { TOUCH_ICON, TOUCH_TARGET } from "../classes";
-import type { SupportFetchClient, WireCannedReply } from "../hooks";
-import { useSupportCannedReplies } from "../hooks";
+import type {
+  SupportFetchClient,
+  UseSupportCannedRepliesResult,
+  WireCannedReply,
+} from "../hooks";
+import { Icon } from "../ui";
 import {
   Button,
   buttonClass,
@@ -16,6 +20,8 @@ import type { InboxLabels } from "./types";
 type CannedPickerProps = {
   client: SupportFetchClient;
   labels: InboxLabels;
+  /** The composer's canned replies (it suggests them on `/` too). */
+  canned: UseSupportCannedRepliesResult;
   onInsert: (text: string) => void;
   buttonClassName?: string | undefined;
   fieldClassName?: string | undefined;
@@ -28,12 +34,12 @@ type CannedPickerProps = {
  */
 export function CannedPicker({
   client,
+  canned,
   labels,
   onInsert,
   buttonClassName,
   fieldClassName,
 }: CannedPickerProps) {
-  const canned = useSupportCannedReplies(client);
   const [hidden, setHidden] = useState(false);
   const [manageForbidden, setManageForbidden] = useState(false);
   const managing = useRef(false);
@@ -52,8 +58,14 @@ export function CannedPicker({
 
   return (
     <Popover
-      trigger={labels.cannedReplies}
+      trigger={
+        <>
+          <Icon name="zap" />
+          <span className="sr-only">{labels.cannedReplies}</span>
+        </>
+      }
       label={labels.cannedReplies}
+      title={labels.cannedReplies}
       buttonClassName={buttonClassName}
       placement="above-start"
       anchorToParent

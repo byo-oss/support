@@ -47,6 +47,33 @@ export type SupportWidgetLabels = {
   attachments: string;
   /** A file size, e.g. "12 KB". */
   fileSize: (bytes: number) => string;
+  /**
+   * Ticket statuses in the customer's words, shown in the list, the thread
+   * header and status changes ("Awaiting your reply" rather than "Pending").
+   * A status overridden in `status` and not here shows the `status` text.
+   */
+  customerStatus: Record<"open" | "pending" | "solved" | "closed", string>;
+  /** Shown in an empty list, above the New ticket button. */
+  emptyHint: string;
+  /** Alt text of an image attachment preview. */
+  imagePreview: (filename: string) => string;
+  /** Heading over the kinds of support (the server's `categories`). */
+  chooseCategory: string;
+  /**
+   * Each category's card and form wording, by category id. A category the
+   * server offers that is missing here shows its id as the title.
+   */
+  categories: Record<string, SupportCategoryLabels>;
+};
+
+/** How the widget presents one kind of support. */
+export type SupportCategoryLabels = {
+  /** The card's title and the form's heading: "Report a bug". */
+  title: string;
+  /** Under the title on the card: "Something isn't working". */
+  hint: string;
+  /** Placeholder of the form's message box. */
+  placeholder: string;
 };
 
 function formatFileSize(bytes: number): string {
@@ -77,4 +104,35 @@ export const defaultWidgetLabels: SupportWidgetLabels = {
   attachmentFailed: "The file could not be opened.",
   attachments: "Attachments",
   fileSize: formatFileSize,
+  customerStatus: {
+    open: "With our team",
+    pending: "Awaiting your reply",
+    solved: "Solved",
+    closed: "Closed",
+  },
+  emptyHint: "Questions, problems or ideas: we read every ticket.",
+  imagePreview: (filename) => `Preview of ${filename}`,
+  chooseCategory: "What can we help with?",
+  categories: {
+    question: {
+      title: "Ask a question",
+      hint: "How do I…?",
+      placeholder: "What are you trying to do?",
+    },
+    bug: {
+      title: "Report a bug",
+      hint: "Something isn't working",
+      placeholder: "What happened, and what did you expect to happen?",
+    },
+    feature: {
+      title: "Suggest a feature",
+      hint: "What would make your work easier?",
+      placeholder: "What would you like to do, and why?",
+    },
+    sales: {
+      title: "Talk to us",
+      hint: "Plans, billing or anything else",
+      placeholder: "How can we help?",
+    },
+  },
 };

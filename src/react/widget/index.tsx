@@ -13,6 +13,7 @@ import {
   type WireCustomerMessage,
 } from "../hooks";
 import type { SupportLabels } from "../labels";
+import { Icon } from "../ui";
 import type { SupportWidgetLabels } from "./labels";
 import { ListView, NewTicketView } from "./list";
 import { ThreadView } from "./thread";
@@ -104,7 +105,7 @@ export type SupportWidgetProps = {
 
 type View =
   | { name: "list" }
-  | { name: "new" }
+  | { name: "new"; category?: string }
   | { name: "thread"; ticketId: string };
 
 const defaultNavigate = (href: string) => window.location.assign(href);
@@ -114,7 +115,7 @@ const DEFAULT_BADGE_POLL_INTERVAL = 60_000;
 const LAUNCHER_CLASS = `relative inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent ${focusRing} ${TOUCH_TARGET}`;
 
 const PANEL_CLASS =
-  "flex flex-col overflow-hidden rounded-lg border border-border bg-background text-foreground";
+  "flex flex-col overflow-hidden rounded-xl border border-border bg-background text-foreground";
 
 /**
  * The customer widget: ticket list, new ticket, thread, reply with
@@ -306,7 +307,9 @@ export function SupportWidget({
           tickets={tickets}
           labels={labels}
           onOpen={(ticketId) => go({ name: "thread", ticketId })}
-          onNew={() => go({ name: "new" })}
+          onNew={(category) =>
+            go(category ? { name: "new", category } : { name: "new" })
+          }
           focusOnMount={focusOnMount}
           className={listClassName}
         />
@@ -314,6 +317,7 @@ export function SupportWidget({
       {view.name === "new" ? (
         <NewTicketView
           tickets={tickets}
+          category={view.category}
           labels={labels}
           organizationId={organizationId}
           onBack={backToList}
@@ -383,6 +387,7 @@ export function SupportWidget({
         }}
         className={cn(LAUNCHER_CLASS, buttonClassName)}
       >
+        <Icon name="message" />
         {labels.support}
         {unreadCount > 0 ? (
           <span
@@ -405,7 +410,10 @@ export function SupportWidget({
           aria-label={labels.support}
           className={cn(
             PANEL_CLASS,
-            "absolute right-0 z-50 mt-2 max-h-[min(80vh,40rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] shadow-md",
+            "absolute right-0 z-50 mt-2 max-h-[min(80vh,36rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] shadow-xl",
+            // a thread keeps one height, so its reply box stays put as
+            // messages load; the list, the cards and the form fit their content
+            view.name === "thread" && "h-[min(80vh,36rem)]",
           )}
         >
           {panelContent}

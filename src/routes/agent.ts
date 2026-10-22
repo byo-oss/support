@@ -176,8 +176,9 @@ export function agentEndpoints(opts: ResolvedSupportOptions) {
   return {
     /**
      * The queue, newest `lastMessageAt` first, one page. Filters: `status`,
-     * `assignee` (a user id, `"me"` or `"none"`), `tag`, `organizationId`
-     * and `q` (`#123`/`123` exact number, else subject contains). Adds the
+     * `assignee` (a user id, `"me"` or `"none"`), `tag`, `organizationId`,
+     * `requesterId` (the requester's user id), `requesterEmail` (an
+     * account-less requester) and `q` (`#123`/`123` exact number, else subject contains). Adds the
      * queue-wide `counts` and the server's `features`.
      */
     listSupportTickets: createAuthEndpoint(
@@ -190,6 +191,12 @@ export function agentEndpoints(opts: ResolvedSupportOptions) {
             assignee: z.string().min(1).optional(),
             tag: z.string().max(SUPPORT_LIMITS.tagLength).optional(),
             organizationId: z.string().min(1).optional(),
+            requesterId: z.string().min(1).optional(),
+            requesterEmail: z
+              .string()
+              .min(1)
+              .max(SUPPORT_LIMITS.email)
+              .optional(),
             q: z.string().max(SUPPORT_LIMITS.q).optional(),
             cursor: z.string().max(SUPPORT_LIMITS.cursor).optional(),
           })

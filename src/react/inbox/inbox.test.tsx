@@ -666,10 +666,11 @@ describe("thread", () => {
     // the note is marked and styled apart from replies
     const noteArticle = screen.getByText("Private remark").closest("article");
     expect(within(noteArticle as HTMLElement).getByText("Note")).toBeTruthy();
-    expect(noteArticle?.className).toContain("border-dashed");
-    expect(
-      screen.getByText("Words of m1").closest("article")?.className,
-    ).not.toContain("border-dashed");
+    // the bubble is the element around the text
+    const bubble = (text: string) =>
+      screen.getByText(text).closest("p")?.parentElement?.className;
+    expect(bubble("Private remark")).toContain("border-dashed");
+    expect(bubble("Words of m1")).not.toContain("border-dashed");
     // timeline
     expect(
       screen.getByText(/Status changed from Open to Pending/),
@@ -770,12 +771,11 @@ describe("composer", () => {
     await waitFor(() => expect(textbox().value).toBe(""));
   });
 
-  it("sends a note (internal true) with the chosen status", async () => {
+  it("sends a note (internal true), with no Send and solve", async () => {
     const { mocks } = await openTicket();
+    expect(screen.getByRole("button", { name: "Send and solve" })).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
-    fireEvent.change(screen.getByLabelText("Status after sending"), {
-      target: { value: "solved" },
-    });
+    expect(screen.queryByRole("button", { name: "Send and solve" })).toBeNull();
     write("Check logs");
     fireEvent.click(sendButton());
     await waitFor(() =>
@@ -783,9 +783,50 @@ describe("composer", () => {
         ticketId: "t1",
         body: "Check logs",
         internal: true,
+      }),
+    );
+  });
+
+  it("Send and solve replies with status solved", async () => {
+    const { mocks } = await openTicket();
+    write("All fixed");
+    fireEvent.click(screen.getByRole("button", { name: "Send and solve" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "All fixed",
+        internal: false,
         status: "solved",
       }),
     );
+    await waitFor(() => expect(textbox().value).toBe(""));
+  });
+
+  it("offers no Send and solve on a solved ticket", async () => {
+    await openTicket({ tickets: [ticket(1, { status: "solved" })] });
+    expect(screen.queryByRole("button", { name: "Send and solve" })).toBeNull();
+  });
+
+  it("keeps each ticket's unsent text while the agent opens another", async () => {
+    await openTicket();
+    write("Half a thought");
+    fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(SUBJECTS[1] as string) }),
+    );
+    await waitFor(() => expect(textbox().value).toBe(""));
+    expect(
+      (screen.getByRole("radio", { name: "Reply" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    fireEvent.click(
+      screen.getByRole("button", { name: new RegExp(SUBJECTS[0] as string) }),
+    );
+    await waitFor(() => expect(textbox().value).toBe("Half a thought"));
+    expect(
+      (screen.getByRole("radio", { name: "Internal note" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
   });
 
   it("keeps the draft and shows one error when sending fails", async () => {
@@ -1296,8 +1337,9 @@ describe("keyboard and popovers", () => {
       "Canned replies",
       "Mention",
       "Attach file",
-      "Status after sending",
+      "Send and solve",
       "Send",
+      "More ways to send",
     ]);
     // nothing in it takes focus out of order
     for (const el of composer.querySelectorAll("[tabindex]")) {
@@ -1312,7 +1354,9 @@ describe("keyboard and popovers", () => {
     const order = Array.from(
       queue.querySelectorAll<HTMLElement>("input, select, button"),
     ).map((el) => el.getAttribute("aria-label") ?? el.textContent);
-    expect(order.slice(0, 4)).toEqual([
+    // the shortcuts button sits in the heading row, then the chips
+    expect(order[0]).toBe("Keyboard shortcuts");
+    expect(order.slice(1, 5)).toEqual([
       "3 open",
       "1 pending",
       "2 unassigned",
@@ -2129,5 +2173,280 @@ describe("class props", () => {
     fireEvent.click(screen.getByRole("button", { name: "Canned replies" }));
     collect();
     expect(widths).toEqual([]);
+  });
+});
+
+describe("waiting time", () => {
+  const hoursAgo = (hours: number) =>
+    new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+  it("shows how long an open ticket has waited, louder as it ages", async () => {
+    renderInbox({
+      tickets: [
+        ticket(1, { lastMessageAt: hoursAgo(1) }),
+        ticket(2, { lastMessageAt: hoursAgo(7) }),
+        ticket(3, { lastMessageAt: hoursAgo(30) }),
+        ticket(4, { status: "pending", lastMessageAt: hoursAgo(30) }),
+      ],
+    });
+    const fresh = await screen.findByText("Waiting 1h");
+    expect(fresh.className).toContain("text-muted-foreground");
+    expect(screen.getByText("Waiting 7h").className).toContain("amber");
+    expect(screen.getByText("Waiting 30h").className).toContain(
+      "text-destructive",
+    );
+    // pending waits on the customer, not the team
+    expect(screen.getAllByText(/^Waiting/)).toHaveLength(3);
+  });
+});
+
+describe("send options", () => {
+  it("sends and keeps the ticket open, or sends and closes it", async () => {
+    const { mocks } = await openTicket();
+    write("Looking into it");
+    fireEvent.click(screen.getByRole("button", { name: "More ways to send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send and keep open" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "Looking into it",
+        internal: false,
+        status: "open",
+      }),
+    );
+    await waitFor(() => expect(textbox().value).toBe(""));
+    write("Closing this");
+    fireEvent.click(screen.getByRole("button", { name: "More ways to send" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send and close" }));
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenLastCalledWith({
+        ticketId: "t1",
+        body: "Closing this",
+        internal: false,
+        status: "closed",
+      }),
+    );
+  });
+
+  it("offers no send menu for a note", async () => {
+    await openTicket();
+    fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
+    expect(
+      screen.queryByRole("button", { name: "More ways to send" }),
+    ).toBeNull();
+  });
+});
+
+describe("composer suggestions", () => {
+  const type = (value: string) => {
+    const el = textbox();
+    fireEvent.change(el, { target: { value, selectionStart: value.length } });
+  };
+
+  it("/ suggests canned replies and Enter puts one in", async () => {
+    await openTicket();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    type("/gree");
+    const list = await screen.findByRole("listbox", { name: "Canned replies" });
+    const option = within(list).getByRole("option");
+    expect(option.getAttribute("aria-selected")).toBe("true");
+    expect(textbox().getAttribute("aria-activedescendant")).toBe(option.id);
+    fireEvent.keyDown(textbox(), { key: "Enter" });
+    await waitFor(() =>
+      expect(textbox().value).toBe("Hello, thanks for writing"),
+    );
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("@ suggests team members and the pick is sent as a mention", async () => {
+    const { mocks } = await openTicket();
+    fireEvent.click(screen.getByRole("radio", { name: "Internal note" }));
+    type("Ask @bo");
+    const list = await screen.findByRole("listbox", { name: "Team members" });
+    expect(within(list).getAllByRole("option")).toHaveLength(1);
+    fireEvent.keyDown(textbox(), { key: "Tab" });
+    await waitFor(() => expect(textbox().value).toBe("Ask @Bob "));
+    fireEvent.click(sendButton());
+    await waitFor(() =>
+      expect(mocks.reply).toHaveBeenCalledWith({
+        ticketId: "t1",
+        body: "Ask @Bob",
+        internal: true,
+        mentions: [BOB.id],
+      }),
+    );
+  });
+
+  it("Escape hides the suggestions until the text changes", async () => {
+    await openTicket();
+    type("/");
+    await screen.findByRole("listbox");
+    fireEvent.keyDown(textbox(), { key: "Escape" });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    type("/g");
+    expect(await screen.findByRole("listbox")).toBeTruthy();
+  });
+});
+
+describe("keyboard shortcuts", () => {
+  afterEach(() => {
+    try {
+      globalThis.localStorage?.removeItem("byo-support.shortcuts");
+    } catch {
+      // nothing stored
+    }
+  });
+
+  it("j and k move between rows, / focuses the search", async () => {
+    renderInbox();
+    await screen.findByText("Login broken");
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect((document.activeElement as HTMLElement).dataset.ticketId).toBe("t1");
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j" });
+    expect((document.activeElement as HTMLElement).dataset.ticketId).toBe("t2");
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "k" });
+    expect((document.activeElement as HTMLElement).dataset.ticketId).toBe("t1");
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "/" });
+    expect(document.activeElement).toBe(
+      screen.getByRole("searchbox", { name: "Search by number or subject" }),
+    );
+    // typing in a field is never a shortcut
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "j" });
+    expect(document.activeElement?.tagName).toBe("INPUT");
+  });
+
+  it("r and n focus the composer in that mode, e solves the ticket", async () => {
+    const { mocks } = await openTicket();
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "n" });
+    expect(document.activeElement).toBe(textbox());
+    expect(
+      (screen.getByRole("radio", { name: "Internal note" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    textbox().blur();
+    fireEvent.keyDown(document.body, { key: "r" });
+    expect(
+      (screen.getByRole("radio", { name: "Reply" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    textbox().blur();
+    fireEvent.keyDown(document.body, { key: "e" });
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith({
+        ids: ["t1"],
+        status: "solved",
+      }),
+    );
+  });
+
+  it("? opens the sheet, which turns single keys off", async () => {
+    renderInbox();
+    await screen.findByText("Login broken");
+    fireEvent.keyDown(document.body, { key: "?" });
+    const sheet = screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+    fireEvent.click(
+      within(sheet).getByRole("checkbox", { name: /Single-key shortcuts/ }),
+    );
+    fireEvent.click(
+      within(sheet).getAllByRole("button", { name: "Close" })[0] as HTMLElement,
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Keyboard shortcuts" }),
+    ).toBeNull();
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect((document.activeElement as HTMLElement).dataset.ticketId).toBe(
+      undefined,
+    );
+    // the button still opens it
+    fireEvent.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(
+      screen.getByRole("dialog", { name: "Keyboard shortcuts" }),
+    ).toBeTruthy();
+  });
+
+  it("leaves keys alone while focus is elsewhere in the app", async () => {
+    render(<button type="button">Elsewhere</button>);
+    renderInbox();
+    await screen.findByText("Login broken");
+    const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+    elsewhere.focus();
+    fireEvent.keyDown(elsewhere, { key: "j" });
+    expect(document.activeElement).toBe(elsewhere);
+  });
+});
+
+describe("image previews", () => {
+  it("previews a small image, not a pdf or a large image, and a failed load shows nothing", async () => {
+    const createObjectURL = vi.fn(() => "blob:preview");
+    stub(URL, "createObjectURL", createObjectURL);
+    stub(URL, "revokeObjectURL", vi.fn());
+    const { mocks } = await openTicket(
+      {
+        attachments: [
+          attachment("img", "m1", {
+            filename: "shot.png",
+            contentType: "image/png",
+          }),
+          attachment("big", "m1", {
+            filename: "huge.jpg",
+            contentType: "image/jpeg",
+            size: 6 * 1024 * 1024,
+          }),
+          attachment("doc", "m1"),
+        ],
+      },
+      {},
+    );
+    mocks.$fetch.mockImplementation((_path: string, options: Row) =>
+      (options.query as { id: string }).id === "img"
+        ? ok(new Blob(["png"], { type: "image/png" }))
+        : fail({ status: 500 }),
+    );
+    // the files still list, and download, as chips
+    expect(
+      screen.getByRole("button", { name: "Open attachment shot.png" }),
+    ).toBeTruthy();
+    const img = await waitFor(() => {
+      const found = document.querySelector('img[src="blob:preview"]');
+      if (!found) throw new Error("no preview yet");
+      return found;
+    });
+    expect(img.getAttribute("alt")).toBe("Preview of shot.png");
+    // one preview: only shot.png was fetched for one
+    const previewed = mocks.$fetch.mock.calls.map(
+      ([, options]) => (options.query as { id: string }).id,
+    );
+    expect(previewed).toEqual(["img"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a preview that fails to load is dropped without an error", async () => {
+    stub(
+      URL,
+      "createObjectURL",
+      vi.fn(() => "blob:never"),
+    );
+    const made = makeClient({
+      attachments: [
+        attachment("img", "m1", {
+          filename: "shot.png",
+          contentType: "image/png",
+        }),
+      ],
+    });
+    made.mocks.$fetch.mockImplementation(() => fail({ status: 500 }));
+    render(
+      <SupportInbox client={made.client} agents={AGENTS} pollInterval={0} />,
+    );
+    await screen.findByText("Login broken");
+    fireEvent.click(screen.getByRole("button", { name: /Login broken/ }));
+    await screen.findByRole("log");
+    await waitFor(() => expect(made.mocks.$fetch).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(document.querySelector(".animate-pulse.size-24")).toBeNull(),
+    );
+    expect(document.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

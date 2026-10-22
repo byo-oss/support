@@ -107,6 +107,64 @@ export type SupportInboxLabels = {
   mergeInto: (number: number) => string;
   confirmMerge: (source: number, target: number) => string;
   confirmMergeAction: string;
+  /** Empty queue while a filter or search is set. */
+  emptyFiltered: string;
+  clearFilters: string;
+  /** Composer: the send-and-solve button and the keyboard hint. */
+  sendAndSolve: string;
+  sendHint: string;
+  /** Shown over the composer while files are dragged over it. */
+  dropFiles: string;
+  /** Details panel: the requester card. */
+  requester: string;
+  verified: string;
+  channelWeb: string;
+  channelEmail: string;
+  /** Next to a message that arrived by email. */
+  viaEmail: string;
+  sharedWithOrganization: string;
+  opened: string;
+  lastActivity: string;
+  solvedAt: string;
+  rating: string;
+  ratedGood: string;
+  ratedBad: string;
+  /** The requester has seen the newest message. */
+  requesterSeenLatest: string;
+  /** The requester last looked at the ticket at `when` (a relative time), before the newest message. */
+  requesterSeenAt: (when: string) => string;
+  requesterNotSeen: string;
+  /** Heading of the status, priority and assignee controls. */
+  properties: string;
+  /** Alt text of an image attachment preview. */
+  imagePreview: (filename: string) => string;
+  /** On an open ticket's row: how long the customer has waited since their last reply ("Waiting 3h"). */
+  waitingFor: (since: Date) => string;
+  /** The menu next to Send, and its choices. */
+  sendOptions: string;
+  sendKeepOpen: string;
+  sendAndClose: string;
+  /** Composer placeholders: `/` and `@` open suggestions. */
+  replyPlaceholder: string;
+  notePlaceholder: string;
+  /** Names of the suggestion lists under the composer. */
+  cannedSuggestions: string;
+  mentionSuggestions: string;
+  /** The keyboard shortcuts sheet (`?`). */
+  shortcuts: string;
+  shortcutsToggle: string;
+  shortcutsToggleHint: string;
+  shortcutNext: string;
+  shortcutPrevious: string;
+  shortcutOpen: string;
+  shortcutSearch: string;
+  shortcutReply: string;
+  shortcutNote: string;
+  shortcutSolve: string;
+  shortcutSend: string;
+  shortcutHelp: string;
+  /** The send keys as the shortcuts sheet writes them. */
+  sendKeys: string;
 };
 
 export const defaultInboxLabels: SupportInboxLabels = {
@@ -202,4 +260,59 @@ export const defaultInboxLabels: SupportInboxLabels = {
   confirmMerge: (source, target) =>
     `Merge #${source} into #${target}? The messages move to #${target} and #${source} closes.`,
   confirmMergeAction: "Yes, merge",
+  emptyFiltered: "No tickets match these filters.",
+  clearFilters: "Clear filters",
+  sendAndSolve: "Send and solve",
+  sendHint: "Ctrl+Enter to send",
+  dropFiles: "Drop files to attach",
+  requester: "Requester",
+  verified: "Verified",
+  channelWeb: "Web",
+  channelEmail: "Email",
+  viaEmail: "via email",
+  sharedWithOrganization: "Shared with their organization",
+  opened: "Opened",
+  lastActivity: "Last activity",
+  solvedAt: "Solved",
+  rating: "Rating",
+  ratedGood: "Good",
+  ratedBad: "Bad",
+  requesterSeenLatest: "Has seen the latest message",
+  requesterSeenAt: (when) => `Last seen ${when}`,
+  requesterNotSeen: "Hasn't opened the ticket yet",
+  properties: "Properties",
+  imagePreview: (filename) => `Preview of ${filename}`,
+  waitingFor: (since) =>
+    `Waiting ${formatDuration(Date.now() - since.getTime())}`,
+  sendOptions: "More ways to send",
+  sendKeepOpen: "Send and keep open",
+  sendAndClose: "Send and close",
+  replyPlaceholder: "Reply to the customer. Type / for canned replies",
+  notePlaceholder: "Only your team sees notes. Type @ to mention someone",
+  cannedSuggestions: "Canned replies",
+  mentionSuggestions: "Team members",
+  shortcuts: "Keyboard shortcuts",
+  shortcutsToggle: "Single-key shortcuts",
+  shortcutsToggleHint:
+    "Turn these off if they get in the way of a screen reader or voice control. Ctrl+Enter keeps working.",
+  shortcutNext: "Next ticket",
+  shortcutPrevious: "Previous ticket",
+  shortcutOpen: "Open the ticket",
+  shortcutSearch: "Search the queue",
+  shortcutReply: "Write a reply",
+  shortcutNote: "Write an internal note",
+  shortcutSolve: "Mark the open ticket solved",
+  shortcutSend: "Send",
+  shortcutHelp: "Show these shortcuts",
+  sendKeys: "Ctrl+Enter",
 };
+
+/** `45m`, `3h`, `2d`: a short duration. */
+function formatDuration(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}

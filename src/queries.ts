@@ -1,7 +1,7 @@
 import type { Where } from "better-auth";
 import { APIError } from "better-auth/api";
 import { myOrganizationIds } from "./access";
-import { chunk, findAll, type SupportRuntime } from "./adapter";
+import { chunk, findAll, lowerEmail, type SupportRuntime } from "./adapter";
 import { SUPPORT_ERROR_CODES } from "./error-codes";
 import { SUPPORT_LIMITS } from "./options";
 import type {
@@ -26,6 +26,10 @@ export type AgentListFilters = {
   assignee?: string;
   tag?: string;
   organizationId?: string;
+  /** The requester's account: tickets whose `userId` is this. */
+  requesterId?: string;
+  /** An account-less requester: tickets whose `requesterEmail` is this (any case). */
+  requesterEmail?: string;
   q?: string;
   cursor?: string;
 };
@@ -236,6 +240,15 @@ export async function listAgentTickets(
   }
   if (filters.organizationId) {
     where.push({ field: "organizationId", value: filters.organizationId });
+  }
+  if (filters.requesterId) {
+    where.push({ field: "userId", value: filters.requesterId });
+  }
+  if (filters.requesterEmail) {
+    where.push({
+      field: "requesterEmail",
+      value: lowerEmail(filters.requesterEmail),
+    });
   }
   where.push(...searchWhere(filters.q));
 

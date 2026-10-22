@@ -124,6 +124,8 @@ type PopoverProps = {
   trigger: ReactNode;
   /** Accessible name of the panel (and of the trigger when it has no text). */
   label: string;
+  /** Tooltip of the trigger, for an icon-only one. */
+  title?: string | undefined;
   /** The app's `buttonClassName`. */
   buttonClassName?: string | undefined;
   /** Classes of the trigger itself. */
@@ -132,7 +134,9 @@ type PopoverProps = {
   panelClassName?: string;
   disabled?: boolean;
   /** Which edge the panel hangs from, and whether it opens up or down. */
-  placement?: "above-start" | "below-start" | "below-end";
+  placement?: "above-start" | "above-end" | "below-start" | "below-end";
+  /** The trigger's look. */
+  variant?: ButtonVariant;
   /**
    * Position the panel against the nearest positioned ancestor instead of
    * the button, so it can span a toolbar and stay inside a narrow screen.
@@ -150,11 +154,13 @@ type PopoverProps = {
 export function Popover({
   trigger,
   label,
+  title,
   buttonClassName,
   triggerClassName,
   panelClassName,
   disabled,
   placement = "below-start",
+  variant = "default",
   anchorToParent = false,
   inline = false,
   children,
@@ -189,12 +195,13 @@ export function Popover({
       <button
         ref={triggerRef}
         type="button"
+        title={title}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((value) => !value)}
-        className={buttonClass("default", buttonClassName, triggerClassName)}
+        className={buttonClass(variant, buttonClassName, triggerClassName)}
       >
         {trigger}
       </button>
@@ -210,6 +217,7 @@ export function Popover({
             inline && "mt-1 w-full",
             !inline && "absolute z-30",
             !inline && placement === "above-start" && "bottom-full left-0 mb-1",
+            !inline && placement === "above-end" && "bottom-full right-0 mb-1",
             !inline && placement === "below-start" && "left-0 top-full mt-1",
             !inline && placement === "below-end" && "right-0 top-full mt-1",
             !inline && (panelClassName ?? "w-72"),

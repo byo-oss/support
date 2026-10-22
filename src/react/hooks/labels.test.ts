@@ -32,6 +32,7 @@ describe("defaultLabels", () => {
       unreadCount: true,
       ticketNumber: true,
       relativeTime: true,
+      absoluteTime: true,
     };
     for (const key of Object.keys(keys)) {
       expect(defaultLabels).toHaveProperty(key);

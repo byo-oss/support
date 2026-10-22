@@ -39,6 +39,8 @@ export type CreateTicketInput = {
   verified: boolean;
   /** Inbound mail's Message-ID, stored on the first message. */
   emailMessageId?: string | null;
+  /** Tags the ticket starts with (a widget category); written before `support.ticket.created`. */
+  tags?: string[];
   actorId: string | null;
 };
 
@@ -167,6 +169,10 @@ export async function createTicket(
       );
     }
     throw error;
+  }
+
+  if (input.tags && input.tags.length > 0) {
+    await setTags(rt, { ticketId: ticket.id, add: input.tags });
   }
 
   await emit(
