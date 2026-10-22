@@ -410,7 +410,10 @@ export function SupportWidget({
           aria-label={labels.support}
           className={cn(
             PANEL_CLASS,
-            "absolute right-0 z-50 mt-2 h-[min(80vh,36rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] shadow-xl",
+            "absolute right-0 z-50 mt-2 max-h-[min(80vh,36rem)] w-[calc(100vw-2rem)] max-w-[22.5rem] shadow-xl",
+            // a thread keeps one height, so its reply box stays put as
+            // messages load; the list, the cards and the form fit their content
+            view.name === "thread" && "h-[min(80vh,36rem)]",
           )}
         >
           {panelContent}

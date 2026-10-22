@@ -310,6 +310,7 @@ export const defaultInboxLabels: SupportInboxLabels = {
 /** `45m`, `3h`, `2d`: a short duration. */
 function formatDuration(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return "<1m";
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours}h`;
