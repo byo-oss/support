@@ -1,6 +1,6 @@
 {
   "name": "@byo-oss/support",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A better-auth plugin for customer support: tickets, replies and attachments in your own database.",
   "license": "MIT",
   "author": "Jarod Stewart",
