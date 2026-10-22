@@ -1,0 +1,65 @@
+---
+title: Outgrowing this
+description: When support stops being the right fit, which help desks to look at, how to export your data, and how to move without losing your history.
+group: operations
+order: 1
+---
+
+You've outgrown this package when you have more than about 10 agents, need SLAs or automation rules, answer on the phone, in chat or on social channels, need CSAT reporting, run several brands, or want a help center and AI replies. The usual next stops are [Zendesk](https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_import/), [Plain](https://www.plain.com/docs/graphql/threads/import), [Front](https://dev.frontapp.com/reference/import-inbox-message) and [Help Scout](https://developer.helpscout.com/mailbox-api/endpoints/conversations/create/). Each has a way to import past conversations, and `exportSupportData` gives you the rows to feed it.
+
+## Export
+
+`exportSupportData(auth, options)` returns all of the package's data, or one organization's, as plain JSON in the [schema](/docs/support/schema), a page at a time. It is server-only, not an endpoint.
+
+```ts
+import { exportSupportData, type SupportExportPage } from "@byo-oss/support";
+
+let cursor: string | null = null;
+do {
+  const page: SupportExportPage = await exportSupportData(auth, { cursor, limit: 100 });
+  for (const ticket of page.tickets) await importTicket(ticket);
+  cursor = page.cursor;
+} while (cursor);
+```
+
+- **Options:** `organizationId?` (only that organization's tickets, and no canned replies), `cursor?` (from the previous page) and `limit?` (1 to 500, default 100).
+- **A ticket** has every field except `replyToken`, plus `userEmail` (the requester's current email), `assigneeEmail`, `tags`, `messages` (oldest first, notes and events included, each with `userEmail` and its `deliveries`) and `attachments` (metadata, with the uploader's `userEmail`). `storageKey` locates the blob, so you can copy it. Dates are ISO strings.
+- **`replyToken` is never exported.** It lets mail be posted into a ticket, and exports go to other tools.
+- **Canned replies** (with the author's `userEmail`) come on the first page of an export without `organizationId`.
+- **Paging** is a keyset on ticket `number`, so a ticket deleted mid-export never makes another one skip. Tickets created mid-export come on later pages. `cursor` is `null` on the last page.
+- **Left out:** `supportCounter`, which is operational state.
+- Deliveries exist only with a `mailer`, and attachments only with `attachments`. Otherwise those lists are empty. Inside a better-auth transaction (`runWithTransaction`), it reads in that transaction.
+
+## Moving over
+
+1. **Run both.** Set the new tool up with its own address and forward a test inbox to it, while support keeps serving customers. Build and check the field mapping on a few tickets.
+2. **Backfill.** Loop `exportSupportData` until `cursor` is `null`, creating users and organizations first, then tickets with their comments and attachments.
+3. **Cut over.** Point your support address and the in-app entry point at the new tool. Stop calling `processSupportDeliveries`, and stop routing support events to notifications (or point them at the new tool's webhooks). Keep the old tables as the archive until you're sure.
+4. **Uninstall** once nothing reads the old queue. See [Uninstall](/docs/support/uninstall).
+
+## Mapping to Zendesk
+
+Mapping to Zendesk's [ticket import](https://developer.zendesk.com/api-reference/ticketing/tickets/ticket_import/) (`POST /api/v2/imports/tickets`, or `create_many` for up to 100 at a time):
+
+| Here | Zendesk |
+|---|---|
+| `id` | `external_id` |
+| `number` | Not settable. Keep it in a tag such as `ticket-123` |
+| `subject` | `subject` |
+| `status` | `status`: the same four strings (`open`, `pending`, `solved`, `closed`) |
+| `priority` | `priority`: the same strings (`low`, `normal`, `high`, `urgent`) |
+| `tags` | `tags`, sanitized to Zendesk's rules |
+| `channel` | `via.channel` (`web` or `email`), plus a tag if you want to filter on it |
+| `assigneeEmail` | `assignee_id`, looked up by email |
+| `userEmail`, or `requesterEmail` and `requesterName` | `requester_id`, created first with [`users/create_many`](https://developer.zendesk.com/api-reference/ticketing/users/users/#create-many-users) |
+| `organizationId` | `organization_id`, after creating the organizations |
+| `createdAt`, `updatedAt`, `solvedAt` | `created_at`, `updated_at`, `solved_at` |
+| `messages` of kind `reply` and `note` | `comments[]`: `body`, `created_at`, `public` (`false` for `note`), `author_id` looked up by the message's `userEmail` (or `authorEmail`) |
+| `messages` of kind `event` | No equivalent. Skip them, or import as private comments |
+| `attachments` | Copy each blob by `storageKey`, upload it to Zendesk, and attach the token to the comment |
+| `rating` | A tag `csat:good` or `csat:bad`. Ratings can't be imported natively |
+| `verified`, `visibility`, `mergedIntoId` | No equivalent. Tag `verified: false` tickets if you want to review them. Skip merged sources |
+| canned replies | Zendesk macros |
+| `supportDelivery`, `supportCounter` | No equivalent. They stay here |
+
+Plain's `importThread` is idempotent, which makes a re-run safe. Front and Help Scout take a conversation with its messages in a similar shape.

@@ -1,0 +1,41 @@
+---
+title: Introduction
+description: Customer support for better-auth apps, with tickets, replies and attachments in your own database, a widget for customers and an inbox for staff.
+group: get started
+order: 1
+---
+
+`@byo-oss/support` adds customer support to a [better-auth](https://better-auth.com) app. It is a better-auth plugin: one migration, two React components, and the tickets live in your own database, belonging to your better-auth users.
+
+> Community plugin — not affiliated with the better-auth team.
+
+## What you get
+
+- **Your users, your organizations, your permissions.** Tickets belong to better-auth users. A customer can share a ticket with their organization. Your staff are members of one organization you choose, with roles you control through better-auth's access control. See [Access](/docs/support/access).
+- **One plugin, one migration, two components.** `SupportWidget` for customers, `SupportInbox` for agents, both on headless hooks you can use instead. See [React components](/docs/support/react).
+- **Email when you want it.** Agent replies are mailed to the requester through a `Mailer`, either [Wraps](https://wraps.dev) on your own AWS SES account or your own. Mail sent to your support address opens or continues a ticket, with an aligned-DKIM check. See [Email](/docs/support/email).
+- **Events, not a notification system.** Every change emits an event. Route them to staff and customers through [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) or anything else. See [Events](/docs/support/events).
+- **Kinds of support.** The widget asks each customer what kind of help they need: a question, a bug, a feature or a sales question by default. The pick is stored as a tag on the ticket, so agents filter by it like any tag. See [Options](/docs/support/options#categories).
+- **A way out.** `exportSupportData`, a documented schema and a clean uninstall are part of the package. See [Outgrowing this](/docs/support/outgrowing).
+
+Without `mailer`, `inbound` or `attachments`, nothing sends or receives email and nothing is stored outside your database.
+
+## Not included (yet)
+
+A helpdesk for a young product: one shared queue, plain text threads, email in and out, no SLA clock. Not here: SLAs and an automation or rule builder, multiple brands, social and chat channels (Slack, WhatsApp), live chat over websockets (the UI polls), AI auto-replies, saved views, merging tickets from different requesters or organizations, snooze and away status, an auto-acknowledge email for email-only senders, signed rating links in email, anonymous widget visitors, apps without the organization plugin, and shipped translations (the `labels` defaults are English).
+
+Known limits:
+
+- **Tags.** `listSupportTags` reads at most 10,000 tag rows and dedupes in code, so a store with more than that lists a subset. A ticket's own tags are read the same way.
+- **Search.** `q` matches a ticket number exactly (`#123` or `123`). Anything else is a case-insensitive "subject contains". It doesn't search message bodies, and the subject isn't indexed, so it scans on a very large table.
+- **Plain text.** Messages are plain text. Attachments are linked in mail, not attached.
+- **Email-only people** can't see their ticket in the app; they live in their inbox. Tickets opened by mail have no organization.
+- **Inbound needs Node.** DKIM verification reads DNS through Node's `dns`, so the inbound endpoint doesn't run on edge runtimes.
+
+For when to move to a dedicated tool, see [Outgrowing this](/docs/support/outgrowing).
+
+## Where to go next
+
+- [Quickstart](/docs/support/quickstart) adds the plugin, the access rules, the migration and the components.
+- [Access](/docs/support/access) covers agents, customers and sessions.
+- [Options](/docs/support/options) and [Schema](/docs/support/schema) list the settings and tables.

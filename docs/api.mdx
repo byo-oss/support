@@ -1,0 +1,101 @@
+---
+title: Server API
+description: Every endpoint and server-only function support adds, with its input and what it returns, the error codes, and the exports.
+group: reference
+order: 1
+---
+
+All of these are better-auth endpoints. Call them through `auth.api` on the server (with `{ headers, body }` or `{ headers, query }`), or through `authClient.support.*` in the browser. Each endpoint is one of the kinds in the [BYO conventions](https://github.com/byo-oss/conventions/blob/main/SPEC.md):
+
+- **own rows** needs a session and works only on the caller's own tickets, and those shared with an organization they belong to;
+- **permission-gated** needs a session and a `support` permission in the staff organization;
+- **server-only** is never an HTTP route;
+- **credential-free** takes no session and is verified by its inbound source.
+
+| `auth.api` key | Method and path | Kind | Input | Returns |
+|---|---|---|---|---|
+| `createSupportTicket` | POST `/support/create-ticket` | own rows | body `subject`, `body`, `organizationId?`, `visibility?` (`"private"` default, or `"organization"`), `category?` (one of `categories`, stored as a tag) | `{ ticket }` |
+| `listMySupportTickets` | GET `/support/my-tickets` | own rows (and org-shared, where a member) | query `status?`, `organizationId?`, `q?`, `cursor?` | `{ tickets, nextCursor, features: { attachments, categories } }` |
+| `getSupportTicket` | GET `/support/ticket` | own rows | query `id` | `{ ticket, messages, attachments }` (customer-visible only) |
+| `replyToSupportTicket` | POST `/support/reply` | own rows | body `ticketId`, `body`, `attachmentIds?` | `{ message }` |
+| `updateMySupportTicket` | POST `/support/update-mine` | own rows (requester only) | body `id`, `status?` (`"solved"` or `"open"`), `visibility?`, `rating?` (`"good"` or `"bad"`) | `{ ticket }` |
+| `markSupportTicketSeen` | POST `/support/mark-seen` | own rows (requester only) | body `id` | `{ ok: true }` |
+| `uploadSupportAttachment` | POST `/support/upload` | own rows | query `ticketId`, `filename`; raw body; `Content-Type` is the file's type | `{ attachment }` (unattached) |
+| `getSupportAttachment` | GET `/support/attachment` | own rows | query `id` | the file |
+| `listSupportTickets` | GET `/support/agent/tickets` | permission-gated `support:read` | query `status?`, `assignee?` (a user id, `"me"` or `"none"`), `tag?`, `organizationId?`, `requesterId?` (the requester's user id), `requesterEmail?` (an account-less requester, any case), `q?`, `cursor?` | `{ tickets, nextCursor, counts, features: { attachments, merge, categories } }` |
+| `getSupportTicketAsAgent` | GET `/support/agent/ticket` | permission-gated `support:read` | query `id` | `{ ticket, messages, attachments }` (every message, notes and events included) |
+| `replyAsSupportAgent` | POST `/support/agent/reply` | permission-gated `support:reply` | body `ticketId`, `body`, `internal?` (a note), `status?`, `mentions?` (agent user ids, up to 20), `attachmentIds?` | `{ message }` |
+| `updateSupportTickets` | POST `/support/agent/update` | permission-gated `support:update` | body `ids` (1 to 100), `status?`, `priority?` (or `null`), `assigneeId?` (or `null`), `addTags?`, `removeTags?` | `{ updated }`: the tickets matched, after merge-follow and dedupe, including any the update left unchanged |
+| `mergeSupportTickets` | POST `/support/agent/merge` | permission-gated `support:update` | body `sourceId`, `targetId` | `{ ticket }` (the target) |
+| `deleteSupportTickets` | POST `/support/agent/delete` | permission-gated `support:delete` | body `ids` (1 to 100) | `{ deleted }` |
+| `markSupportTicketSeenAsAgent` | POST `/support/agent/mark-seen` | permission-gated `support:read` | body `id` | `{ ok: true }` |
+| `listSupportTags` | GET `/support/agent/tags` | permission-gated `support:read` | none | `string[]` (sorted, deduped) |
+| `listSupportCannedReplies` | GET `/support/agent/canned` | permission-gated `support:read` | query `q?` (title contains) | canned replies, by title, up to 200 |
+| `saveSupportCannedReply` | POST `/support/agent/canned/save` | permission-gated `support:manage` | body `id?` (omit to create), `title`, `body` | `{ cannedReply }` |
+| `deleteSupportCannedReply` | POST `/support/agent/canned/delete` | permission-gated `support:manage` | body `id` | `{ ok: true }` |
+| `uploadSupportAttachmentAsAgent` | POST `/support/agent/upload` | permission-gated `support:reply` | query `ticketId`, `filename`, `internal?` (`"true"`/`"false"`); raw body | `{ attachment }` (unattached) |
+| `getSupportAttachmentAsAgent` | GET `/support/agent/attachment` | permission-gated `support:read` | query `id` | the file |
+| `processSupportDeliveries` | none | server-only | none | `{ sent, skipped, retrying, failed, hasMore, closed, pruned }` |
+| `receiveSupportEmail` | POST `/support/inbound` | credential-free, verified by its inbound source | the raw request | 202 `{ ok: true }`, or the source's status |
+
+Lists are newest `lastMessageAt` first, `pageSize` at a time, and `nextCursor` is opaque: pass it back as `cursor`. `counts` on the agent list is queue-wide and ignores the filters: `{ open, pending, unassigned, mine }`. An unauthenticated call answers 401.
+
+## Filtering by requester
+
+The agent list finds one requester's tickets with `requesterId` (their account) or `requesterEmail` (an account-less person's address, matched in any case). Use them for a customer's history on a staff page. They combine with the other filters.
+
+## Features
+
+`features` tells a client what is switched on. Both customer and staff lists return `features.attachments` and `features.categories`, and `listSupportTickets` also returns `features.merge`. `features.categories` lists the server's categories, so the widget can offer the cards and the inbox can mark category tags. The components use these to hide the attach and merge controls.
+
+## Input limits
+
+`subject` 1 to 200 characters (trimmed), `body` 1 to 50,000, canned `title` 200 and `body` 50,000, `ids` up to 100, `attachmentIds` up to 10, `mentions` up to 20, `q` up to 200, `cursor` up to 10,000, a tag 1 to 50 characters of lowercase letters, digits, `-` and `_`, and a stored filename up to 200.
+
+## Server-only functions
+
+These are for your own scripts and hooks. They aren't endpoints:
+
+| Function | Description |
+|---|---|
+| `exportSupportData(auth, { organizationId?, cursor?, limit? })` | One page of everything, as plain JSON: `{ tickets, cannedReplies, cursor }`. See [Lifecycle](/docs/support/lifecycle) and [Outgrowing this](/docs/support/outgrowing) |
+| `deleteOrganizationData(auth, organizationId)` | Deletes an organization's tickets and its blobs: `{ tickets }` |
+| `deleteMemberData(auth, { userId, organizationId })` | Unassigns a staff member's tickets: `{ unassigned }` |
+| `deleteSupportRequesterData(auth, { email })` | Erases an account-less person: `{ tickets, messages }` |
+| `linkSupportRequester(auth, userId)` | Links a verified user's account-less history: `{ tickets, messages }` |
+
+## Exports
+
+From the root, `@byo-oss/support` exports `supportStatements`, `supportRoles`, `SUPPORT_ERROR_CODES`, `SUPPORT_EVENT_TYPES`, `rawRelay`, `exportSupportData`, the lifecycle functions above, and the types `SupportOptions`, `SupportEvent`, `Mailer`, `SupportInboundSource`, `SupportStorage`, `DkimResolver`, `SupportExportPage` and the rest of the option and response types.
+
+From `@byo-oss/support/client`: `supportClient`, `supportPathMethods`, `supportStatements` and `supportRoles`, with response types for the endpoints. Access files import from here, so they stay out of the server's mail parsing.
+
+From `@byo-oss/support/react`: `SupportWidget` and `SupportInbox`, the headless hooks listed in [React components](/docs/support/react#headless-hooks), and the default label sets.
+
+From `@byo-oss/support/wraps`: `wrapsMailer` and `wrapsInbound`. From `@byo-oss/support/s3`: `s3Storage`. From `@byo-oss/support/testing` (ESM only, needs `vitest`): `testSupportInboundSource`, `testSupportStorage`, `memoryStorage`.
+
+## Error codes
+
+`SUPPORT_ERROR_CODES` is exported and set as the plugin's `$ERROR_CODES`. Responses are `{ code, message }`.
+
+| Code | Status | When |
+|---|---|---|
+| `ORGANIZATION_PLUGIN_REQUIRED` | thrown at boot | `organization()` is not in `plugins` |
+| `TICKET_NOT_FOUND` | 404 | The ticket doesn't exist, or this customer can't see it (no existence leak) |
+| `NOT_ALLOWED` | 403 | An agent action `authorize` denied; a teammate on a requester-only action; `visibility: "organization"` on a ticket with no organization |
+| `SESSION_NOT_ACCEPTED` | 403 | `acceptSession` returned `false` (by default, an impersonated session) |
+| `NOT_A_MEMBER` | 403 | Creating or sharing with an organization the caller isn't a member of |
+| `TICKET_CLOSED` | 400 | A reply on a closed ticket, or a requester status change on one |
+| `INVALID_STATUS_TRANSITION` | 400 | A requester status change the rules refuse |
+| `INBOUND_NOT_CONFIGURED` | 404 | `/support/inbound` without `inbound` |
+| `MERGE_NOT_ALLOWED` | 400 | A different requester or organization, the same ticket, or a source or target already merged |
+| `STORAGE_NOT_CONFIGURED` | 400 | An upload or download, or `attachmentIds`, without `attachments` |
+| `ATTACHMENT_TOO_LARGE` | 413 | Missing or over-limit `Content-Length`, or more bytes than declared |
+| `ATTACHMENT_TYPE_NOT_ALLOWED` | 415 | A content type not in `allowedTypes` |
+| `ATTACHMENT_NOT_USABLE` | 400 | An id in `attachmentIds` failed the binding rules |
+| `ATTACHMENT_NOT_FOUND` | 404 | The attachment or its blob is missing, or this caller can't read it |
+| `NOT_AN_AGENT` | 400 | An assignee or a mention that fails `isAgent` |
+| `INVALID_CURSOR` | 400 | A malformed cursor |
+| `INVALID_TAG` | 400 | A tag that is empty, too long or has characters outside `a-z0-9_-` |
+| `INVALID_CATEGORY` | 400 | A `category` on `create-ticket` that isn't one of the server's `categories` |
+| `CANNED_REPLY_NOT_FOUND` | 404 | Saving a canned reply with an unknown `id` |

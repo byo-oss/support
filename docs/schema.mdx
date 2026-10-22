@@ -1,0 +1,129 @@
+---
+title: Schema
+description: The tables support creates, their fields and types, the indexes it declares, and the rules for changing them, including MongoDB.
+group: reference
+order: 3
+---
+
+Support creates these tables. They are a public contract: a change that breaks reading existing rows is a major release. Rename tables or fields with the `schema` option. Nothing is added to better-auth's own tables (`user`, `organization`, `member`). Emails are stored lowercased.
+
+The plugin declares indexes on the fields it filters by: `organizationId`, `userId`, `assigneeId`, `ticketId`, `tag`, `status`, `lastMessageAt`, `requesterEmail`, `authorEmail`, delivery `status` and `scheduledFor`, and the message and attachment `createdAt`. Don't query or write these tables from app code. Go through `auth.api.*`, the hooks and the exported functions.
+
+Which tables you get depends on your options: `supportDelivery` appears once you set `mailer`, and `supportAttachment` once you set `attachments`. Run the migration again after you turn either on. A generated schema (drizzle or prisma through the better-auth CLI) only has them if the auth config the CLI loads passes `mailer` and `attachments` the way production does.
+
+## supportTicket
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `number` | number, unique | The display number (`#123`), from `supportCounter` |
+| `subject` | string | |
+| `status` | string | `open`, `pending`, `solved` or `closed` |
+| `priority` | string, optional | `low`, `normal`, `high` or `urgent` |
+| `channel` | string | `web` or `email`: how it was opened |
+| `userId` | string → `user.id`, set null, optional | The requester's account |
+| `requesterEmail` | string, optional | An account-less requester's address. Never copied from an account. Cleared when the ticket is linked |
+| `requesterName` | string, optional | Same rule as `requesterEmail` |
+| `organizationId` | string → `organization.id`, cascade, optional | The customer organization. Null for tickets opened by mail |
+| `visibility` | string | `private`, or `organization` (visible to that organization's current members) |
+| `assigneeId` | string → `user.id`, set null, optional | The assigned agent |
+| `rating` | string, optional | `good` or `bad`, set by the requester |
+| `verified` | boolean | `true` for web tickets. For email tickets, the creating message's DKIM result. A later append never flips it to `true`. Shown to agents only |
+| `mergedIntoId` | string, optional | Set on a ticket merged into another: the target's `id`. Indexed, but no foreign key, because better-auth's drizzle generator can't type a self-reference under `strict`. Deleting the target through support nulls it |
+| `replyToken` | string, unique | 128-bit random token in the Reply-To address. Never returned by any endpoint or export |
+| `requesterSeenAt` | date, optional | When the requester last saw the ticket |
+| `agentSeenAt` | date, optional | When an agent last saw it |
+| `lastMessageAt` | date | Orders the lists |
+| `solvedAt` | date, optional | When it was last solved. The sweep closes it `autoCloseAfter` later |
+| `createdAt`, `updatedAt` | date | |
+
+## supportCounter
+
+Operational state for ticket numbers. Left out of exports.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `key` | string, unique | `"ticket"` |
+| `value` | number | The last number handed out |
+
+## supportTicketTag
+
+One row per tag per ticket. A category is stored here too.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `ticketId` | string → `supportTicket.id`, cascade | |
+| `tag` | string | Lowercase, trimmed, 1 to 50 characters of `a-z0-9_-` |
+
+## supportMessage
+
+The thread.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `ticketId` | string → `supportTicket.id`, cascade | |
+| `kind` | string | `reply`, `note` (internal, never shown to customers) or `event` (a timeline entry with `data`) |
+| `authorType` | string | `customer`, `agent` or `system` |
+| `userId` | string → `user.id`, set null, optional | The author's account |
+| `authorEmail`, `authorName` | string, optional | An account-less sender |
+| `body` | string | Plain text. Inbound mail has its quoted text stripped. Empty on events |
+| `data` | json, optional | On events: `{ type: "status" \| "assignee" \| "priority" \| "merged" \| "attachment_dropped" \| "followup_of", from?, to? }` |
+| `mentions` | json, optional | `string[]` of agent user ids, on agent messages |
+| `emailMessageId` | string, unique, optional | The RFC 5322 Message-ID of inbound mail, and of outbound mail when the mailer reports it |
+| `channel` | string | `web` or `email`. On events, what caused them: a status change from an email reply, and `attachment_dropped` and `followup_of` rows, are `email` |
+| `verified` | boolean | The inbound DKIM result (`false` when SES marked the mail as spam). `true` for in-app messages |
+| `createdAt` | date | |
+
+## supportCannedReply
+
+Staff-wide saved replies.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `title`, `body` | string | |
+| `userId` | string → `user.id`, set null, optional | The author |
+| `createdAt`, `updatedAt` | date | |
+
+## supportDelivery
+
+Only with `mailer`. The outbound queue, one row per mailed reply.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `messageId` | string → `supportMessage.id`, cascade | The reply it delivers |
+| `ticketId` | string → `supportTicket.id`, cascade | |
+| `status` | string | `pending`, `sending`, `sent`, `skipped` or `failed` |
+| `scheduledFor` | date | When it is due |
+| `claimedAt` | date, optional | When a sweep claimed it. A claim older than `leaseMs` is retried |
+| `attempts` | number | Sends tried |
+| `detail` | string, optional | The last error, or why it was skipped: `seen`, `note`, `not_a_reply`, `no_address` or `deleted` |
+| `providerId` | string, optional | The mailer's id for the send |
+| `createdAt` | date | |
+
+There is no recipient column. The address is resolved when the mail is sent.
+
+## supportAttachment
+
+Only with `attachments`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Primary key |
+| `ticketId` | string → `supportTicket.id`, cascade | |
+| `messageId` | string → `supportMessage.id`, cascade, optional | Null until attached to a sent message |
+| `userId` | string → `user.id`, set null, optional | The uploader |
+| `internal` | boolean | Uploaded by an agent for a note. Never readable by customers |
+| `filename` | string | Sanitized: no path parts, up to 200 characters |
+| `contentType` | string | |
+| `size` | number | Bytes |
+| `storageKey` | string | `support/<organizationId or "_">/<attachmentId>` |
+| `createdAt` | date | |
+
+## Indexes and MongoDB
+
+The plugin declares the indexes listed above. MongoDB's better-auth adapter creates none of them. Create unique indexes on `supportCounter.key`, `supportTicket.number`, `supportTicket.replyToken` and `supportMessage.emailMessageId` yourself. Ticket numbering and inbound de-duplication rely on them. Without foreign keys, deleting tickets, organizations and users goes through the cleanup code described in [Lifecycle](/docs/support/lifecycle).

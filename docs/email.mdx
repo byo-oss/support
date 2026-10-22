@@ -1,0 +1,156 @@
+---
+title: Email
+description: Mail agent replies to requesters through a Mailer, schedule the sweep that sends and closes tickets, and receive customer mail through an inbound source.
+group: guides
+order: 3
+---
+
+Support mails agent replies to the requester and receives customer mail, both through providers you choose. Nothing is sent or received until you add `mailer`, `email` and `inbound`. Both need `email`, the settings for the reply address and links.
+
+## Outbound replies
+
+Add a `Mailer` and `email`, and every public agent reply is queued for the requester. Notes are never mailed.
+
+```sh
+npm install @wraps.dev/email
+```
+
+```ts title="lib/auth.ts"
+import { support } from "@byo-oss/support";
+import { wrapsMailer } from "@byo-oss/support/wraps";
+
+support({
+  staffOrganizationId,
+  mailer: wrapsMailer({ from: "Acme Support <support@acme.com>" }),
+  email: {
+    from: "Acme Support <support@acme.com>", // the same address the mailer sends from
+    replyDomain: "reply.acme.com",
+    appUrl: "https://app.acme.com",
+  },
+});
+```
+
+`wrapsMailer` is re-exported from `@byo-oss/mailer/wraps`. It sends through your own AWS SES account, and the sender must be verified there. Any object with `send(message)` is a `Mailer`: it resolves `{ id, messageId? }`, throws to retry, and throws `PermanentMailError` (from `@byo-oss/mailer`) for a send that can never succeed. Run `testMailer` from `@byo-oss/mailer/testing` against your own. `@byo-oss/mailer` also has `sesMailer` (`@byo-oss/mailer/ses`, for an SES v2 client you already have) and `emailSdkMailer` (`@byo-oss/mailer/email-sdk`). To import those subpaths, add `@byo-oss/mailer` as a direct dependency, since pnpm doesn't expose a dependency's dependencies.
+
+The `email` options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `from` | required | Sender of thread mail. Mail from this address is dropped as a loop |
+| `replyDomain` | required | Replies go to `support+<token>@<replyDomain>`. A domain, not an address. Mail from any address on it is dropped as a loop |
+| `appUrl` | required | Your app's origin, for the ticket link in mail |
+| `ticketPath` | `` (id) => `/support/${id}` `` | Path of a ticket in your app. Set it if the default could collide with your routes |
+| `replyDelay` | `120000` (ms) | Delay before an agent reply is mailed. `0` sends at once. Must be 0 or more |
+| `requireVerifiedEmail` | `true` | Mail account holders only at a verified address |
+
+### What gets sent
+
+- **Subject** `[#123] <subject>`, **Reply-To** `support+<token>@<replyDomain>`, a plain text body and an escaped HTML copy, and a link to the ticket (`appUrl` plus `ticketPath(id)`). Route that path to a page that renders `<SupportWidget variant="inline" ticketId={id} />` (see [Deep links](/docs/support/react#deep-links)). With `ticketId` the widget shows that ticket's thread, and Back returns to the list. A ticket the signed-in user can't read shows the thread's error state. Set `ticketPath` whenever the default `/support/<id>` could collide with your routes, for example a top-level `/:org` segment where `support` would be read as an organization slug. Attachments go as that link, not as files.
+- **The address** is resolved when the mail is sent: the account's email if verified (or any, with `requireVerifiedEmail: false`), else the account-less requester's `requesterEmail`. With no address, the delivery is `skipped`.
+- **Delay.** A reply is due `replyDelay` after it was written, and is skipped if the requester has seen the ticket since. With `replyDelay: 0` and better-auth's `advanced.backgroundTasks.handler` set, it sends inline. Otherwise the sweep sends it.
+- **Threading** uses the reply token in Reply-To. `In-Reply-To` and `References` are added when a stored Message-ID is known. Inbound mail always stores one, and `wrapsMailer` or `sesMailer` sending through SES in us-east-1 reports the sent Message-ID, so replies are threaded too. In other regions, or with a custom endpoint, replies thread by the token alone. `References` keeps the newest ids up to 900 characters and leaves out ids that aren't printable ASCII.
+
+Each delivery is a row in `supportDelivery` with its status and the reason it was skipped or the last error. See [Schema](/docs/support/schema).
+
+## Run the sweep on a schedule
+
+A plugin can't run jobs. Delayed mail, retries, auto-closing solved tickets and pruning stale uploads happen when you call `processSupportDeliveries` from your scheduler, every minute or so. Without it, delayed replies never go out and solved tickets never close. The sweep works without a `mailer` too.
+
+```ts title="app/api/cron/support/route.ts"
+export async function GET() {
+  const result = await auth.api.processSupportDeliveries({});
+  return Response.json(result); // { sent, skipped, retrying, failed, hasMore, closed, pruned }
+}
+```
+
+Call it again while `hasMore` is true. If you use several BYO plugins, one route can sweep them all with `@byo-oss/core`:
+
+```ts title="app/api/cron/byo/route.ts"
+import { sweepAll } from "@byo-oss/core";
+
+export async function GET() {
+  return Response.json(await sweepAll(auth, { budgetMs: 20_000 }));
+}
+```
+
+Protect the route the way your scheduler expects: a shared secret header, or a platform cron that isn't publicly reachable. `processSupportDeliveries` is server-only. It is never an HTTP route.
+
+## Delivery guarantees
+
+Outbound mail is **at-least-once**. A delivery is claimed atomically before it is sent, so overlapping sweeps don't double-send. A failed send retries with backoff (1 minute, doubling, up to an hour). It is marked `failed` after `maxAttempts` (5 by default). A `PermanentMailError` fails it at once. A worker that dies mid-send has its delivery retried after `leaseMs` (5 minutes by default). So a crash after the provider accepted the mail, but before the row was marked `sent`, sends it twice, and so does a send that outlasts the lease.
+
+## Inbound email
+
+Customers, and people with no account, can email your support address. Mail to `support+<token>@<replyDomain>` continues that ticket. Any other mail your relay posts to the endpoint opens a new one, so route your public support address (`support@acme.com`) to it as well as the reply domain. Add `inbound`, which needs `email` for the reply domain and the loop guard:
+
+```ts title="lib/auth.ts"
+import { rawRelay, support } from "@byo-oss/support";
+
+support({
+  // ...mailer and email as above
+  inbound: { source: rawRelay({ secret: process.env.SUPPORT_INBOUND_SECRET! }) },
+});
+```
+
+The endpoint is `POST <your auth base path>/support/inbound`, for example `https://app.acme.com/api/auth/support/inbound`. It takes no session. The **source** authenticates the relay and reads the raw RFC 822 bytes. Route all mail for `replyDomain`, plus-addresses included, and your public support address to it.
+
+The `inbound` options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `source` | required | `rawRelay(...)` or `wrapsInbound(...)` |
+| `newTickets` | `true` | Open a new ticket for mail that doesn't thread. A requester's reply to a closed ticket still opens its follow-up |
+| `maxPerSenderPerHour` | `20` | Verified email replies stored per sender in the last hour before more are dropped |
+| `maxUnverifiedPerHour` | `100` | Unverified messages stored in the last hour, across all senders, before more are dropped |
+| `maxBytes` | `26214400` (25 MiB) | Largest raw message accepted |
+| `resolver` | system DNS | DNS TXT lookups for the DKIM check, for tests and custom DNS |
+
+**`rawRelay({ secret, maxBytes? })`** works with any relay that POSTs the raw message (`Content-Type: message/rfc822`) with `Authorization: Bearer <secret>`: Postmark inbound, Mailgun routes, a Cloudflare Email Worker. The secret is compared in constant time, and a mismatch answers 401. A message over `maxBytes` answers 413, and an empty body answers 400. The secret must not contain whitespace, so `rawRelay` throws at boot rather than answer 401 to every message. Trim a value read from a file. SES's spam and virus verdicts (below) apply only when the relay passes SES's headers through in the raw message. Other relays don't add them.
+
+**`wrapsInbound({ key, bucket, region, client?, maxBytes? })`** from `@byo-oss/support/wraps` takes Wraps inbound mail (SES to S3, announced by an EventBridge `email.received` event). Point an EventBridge API destination at the endpoint with the header `X-Wraps-Inbound-Key: <key>`. The source reads `rawS3Key` from the event (the whole event or just its `detail`) and fetches that object. The key must not start or end with whitespace, or `wrapsInbound` throws at boot. It needs `@aws-sdk/client-s3` and a role that can read the bucket:
+
+```json title="bucket-policy.json"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::YOUR_BUCKET/*" },
+    { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::YOUR_BUCKET" }
+  ]
+}
+```
+
+Grant `s3:ListBucket` as well as `s3:GetObject`. Without `ListBucket`, S3 reports a missing object as `AccessDenied` instead of `NoSuchKey`, so a message that is gone looks like a failure and the relay retries it forever. With it, a missing object answers 404 and is not retried. Any other S3 error answers 502 and is.
+
+One Wraps inbound stack emits an `email.received` event for every domain it receives mail for, so filter the EventBridge rule behind the API destination on `detail.receivingDomain` (your `replyDomain`). Without the filter, mail for every domain the stack receives reaches support and opens tickets.
+
+```json title="event-pattern.json"
+{
+  "source": ["wraps.inbound"],
+  "detail-type": ["email.received"],
+  "detail": { "receivingDomain": ["support.acme.com"] }
+}
+```
+
+Matching is exact and case-sensitive. Wraps takes `receivingDomain` from the message's first `To` address as written, so mail that reaches support only by Cc or Bcc carries another domain (or none), and the rule skips it. Use `[{ "equals-ignore-case": "support.acme.com" }]` to match any case. Add another domain only if it receives nothing but support mail. Wraps receives every address on a domain and support doesn't check the recipient, so on a shared domain (`sales@`, `billing@`) every unthreaded message would open a ticket. Keep the public support address on a dedicated subdomain instead.
+
+### What the endpoint does with a message
+
+- **Answers 202** for every message it took, dropped and duplicate ones included, so the relay stops retrying. Each drop is logged once through better-auth's logger, at `warn` (a duplicate, a relay's retry, at `info`), with the reason and the sender's domain only. better-auth logs `warn` by default. Set its `logger: { level: "info" }` to see duplicates too. A source's `{ reject: status }` is answered with that status. A source that throws is answered 502, so the relay retries. Without `inbound`, the endpoint answers 404 `INBOUND_NOT_CONFIGURED`.
+- **Drops** mail SES found a virus in, mail from your own `from` address or any address at `replyDomain` (loop guard), auto-replies (`Auto-Submitted` other than `no`, `X-Auto-Response-Suppress`, `Precedence: bulk|junk|auto_reply`), bounces (empty return path, `MAILER-DAEMON`, `postmaster`, delivery reports), a Message-ID it already stored, mail with no sender, unparseable mail, and anything past the caps below.
+- **Verifies** the sender. A message is `verified` when it carries a passing DKIM signature aligned with the From domain, whether or not the domain publishes DMARC. The relay's own authentication headers (`Authentication-Results` and the like) are ignored. The check reads DNS, so it needs Node's `dns` module.
+- **Spam and virus verdicts.** SES scans the mail it receives and adds `X-SES-Spam-Verdict` and `X-SES-Virus-Verdict` at the top of the message. Support reads them from the raw message, so the rule is the same for `wrapsInbound` and for a `rawRelay` fed from SES. Virus `FAIL`: the message is dropped and support stores nothing of it, attachments included. Spam `FAIL`: the message counts as unverified whatever its DKIM says, so it never appends to a ticket, never links to an account, counts toward `maxUnverifiedPerHour`, and opens a new ticket only under `newTickets`. `GRAY`, `PROCESSING_FAILED` or no verdict change nothing. Only the first copy of each header is read, which is SES's, so a copy the sender wrote further down can't hide a `FAIL`.
+- **Caps.** `maxPerSenderPerHour` counts verified email replies from that sender. `maxUnverifiedPerHour` counts every unverified message, so forged mail never uses up a real customer's cap.
+- **Threads** by the reply token in a `support+<token>@<replyDomain>` recipient, then by `In-Reply-To` and `References` matching a stored Message-ID. Never by subject. Merged tickets resolve to their target.
+- **Appends** only verified mail from the requester (an account's verified email, or the stored `requesterEmail`), or, on an organization-shared ticket, from a member whose verified account has that address. Anything else opens a new private ticket with no organization, never linked to the thread.
+- **Links to accounts** only verified mail from a verified account. Unverified mail from an account holder's address is stored as an account-less sender (`requesterEmail`), so a forged `From:` can't put a ticket in someone's account. When a user later verifies that address, their verified tickets and messages are linked to them. `linkSupportRequester` does the same on demand.
+- **Stores** the plain text part with the quoted reply stripped. The raw message is not stored. With `attachments`, parts are stored under the same limits. A part that is over the limit, of a disallowed type or fails to store is dropped, and an `attachment_dropped` event row records it.
+
+Test your own source with `testSupportInboundSource` from `@byo-oss/support/testing`. To test threading end to end without real DNS, sign test mail with a key of your own (`dkimSign` from `mailauth`, say) and serve its public key through `inbound.resolver`:
+
+```ts
+const resolver: DkimResolver = async (name, rrtype) => {
+  if (rrtype === "TXT" && name === "test._domainkey.customer.test") return [[`v=DKIM1; k=rsa; p=${publicKey}`]];
+  throw Object.assign(new Error(`ENOTFOUND ${name}`), { code: "ENOTFOUND" });
+};
+support({ /* ... */ inbound: { source: rawRelay({ secret }), resolver } });
+```

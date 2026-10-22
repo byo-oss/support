@@ -1,0 +1,115 @@
+---
+title: Events
+description: The events support emits after each write, when they fire, what each carries, and how to route them to staff and customers with notifications.
+group: guides
+order: 5
+---
+
+Support emits an event after every write that matters, through `onEvent`. Events are in-process and best-effort: a handler that throws is logged and never fails the request, and nothing is stored or retried.
+
+## When an event fires
+
+Events fire after the write commits. Endpoint writes don't join a caller's transaction, so their events follow at once. `sweepAll` inside your `runWithTransaction` holds the sweep's `support.ticket.status_changed` events until it commits, and drops them on rollback.
+
+Join a transaction with `runWithTransaction`, imported from `@better-auth/core/context` (`better-auth` doesn't export it). A plain `adapter.transaction(trx => …)` isn't joined at all, so the plugin's writes commit at once along with their events. Wrapping with `runWithAdapter(trx, …)` makes them join, but their events fire before the commit, so use `runWithTransaction`. On an adapter without transactions, the events fire at once. If you call `runWithTransaction` yourself, pass `{ onAfterCommitHookError }`, so a hook queued earlier in the same transaction that throws can't skip the events queued after it.
+
+## Event payloads
+
+`data` carries ids, statuses and kinds, never message bodies. It always includes the ticket's `visibility` (`"private"` or `"organization"`), besides the fields below.
+
+| Event | `userId` | `data` (plus `visibility`) |
+|---|---|---|
+| `support.ticket.created` | requester | `{ ticketId, number, channel }` |
+| `support.ticket.status_changed` | requester | `{ ticketId, from, to }` |
+| `support.ticket.assigned` | the new assignee (absent when unassigned) | `{ ticketId, from, to }` |
+| `support.ticket.merged` | requester | `{ ticketId, sourceId, targetId }` (subject is the target) |
+| `support.customer.replied` | requester | `{ ticketId, messageId, channel }` |
+| `support.agent.replied` | requester | `{ ticketId, messageId, status }` |
+| `support.note.added` | none | `{ ticketId, messageId }` |
+| `support.agent.mentioned` | the mentioned agent (one event each) | `{ ticketId, messageId, kind }` |
+
+Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`, so consumers that fan out by organization must skip `visibility: "private"`.
+
+The types are `SupportEvent` and `SUPPORT_EVENT_TYPES`, both exported from the root.
+
+## Notifications
+
+Wire events to [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) with `createEventBus` from `@byo-oss/core`. Staff recipients are the staff organization's members whose role grants `support: ["read"]`, read when the event is sent. Derive them from your roles' permissions, never from a list of role names:
+
+```ts title="lib/auth.ts"
+import { createEventBus } from "@byo-oss/core";
+import { roles } from "./access";
+
+const staffOrganizationId = process.env.SUPPORT_STAFF_ORGANIZATION_ID!;
+
+// staff-organization members whose role grants support:read, except the actor
+async function supportStaff(exceptUserId?: string | null): Promise<string[]> {
+  const ctx = await auth.$context;
+  const members = await ctx.adapter.findMany<{ userId: string; role: string }>({
+    model: "member",
+    where: [{ field: "organizationId", value: staffOrganizationId }],
+    limit: 1000,
+  });
+  const canRead = (role: string) =>
+    role
+      .split(",") // a member can hold several roles
+      .some((name) => roles[name.trim() as keyof typeof roles]?.authorize({ support: ["read"] }).success);
+  return members.filter((m) => canRead(m.role) && m.userId !== exceptUserId).map((m) => m.userId);
+}
+
+const onEvent = createEventBus([
+  async (event): Promise<void> => {
+    const ticketId = event.subject.id;
+    switch (event.type) {
+      // staff: everyone who can read the queue, except whoever caused the event
+      case "support.ticket.created":
+      case "support.customer.replied": {
+        const title = event.type === "support.ticket.created" ? "New support ticket" : "Customer replied";
+        for (const userId of await supportStaff(event.actorId)) {
+          // the /staff/support layout renders <SupportInbox ticketId={id} /> for /staff/support/:id
+          await auth.api.notify({
+            body: { userId, type: event.type, title, href: `/staff/support/${ticketId}` },
+          });
+        }
+        break;
+      }
+      // the one agent it is about
+      case "support.agent.mentioned":
+      case "support.ticket.assigned":
+        if (event.userId) {
+          await auth.api.notify({
+            body: {
+              userId: event.userId,
+              type: event.type,
+              title: event.type === "support.agent.mentioned" ? "You were mentioned" : "A ticket was assigned to you",
+              href: `/staff/support/${ticketId}`,
+            },
+          });
+        }
+        break;
+      // the requester, in-app
+      case "support.agent.replied":
+        if (event.userId) {
+          await auth.api.notify({
+            // the help page renders <SupportWidget variant="inline" ticketId={ticket} />
+            body: { userId: event.userId, type: event.type, title: "New reply to your ticket", href: `/help?ticket=${ticketId}` },
+          });
+        }
+        break;
+    }
+  },
+]);
+
+export const auth = betterAuth({
+  plugins: [organization({ ac, roles }), support({ staffOrganizationId, onEvent }), inbox()],
+});
+```
+
+If you use dynamic access control, check the organization's stored roles the same way. If your app already has a notification layer (a catalog of notification types, preferences, digests), route support's events through it instead of calling `notify` directly. The recipient rules stay the same.
+
+Which events go where:
+
+- **Staff:** `support.ticket.created`, `support.customer.replied`, `support.ticket.assigned` (to the new assignee) and `support.agent.mentioned` (to the mentioned agent). Notify only members of the staff organization whose role grants `support` actions. Read members at send time, so a removed agent stops receiving them.
+- **The requester:** `support.agent.replied`, and `support.ticket.status_changed` if you want to tell them a ticket was solved. Route by `event.userId`.
+- **Never to customers: `support.note.added`.** An internal note has its own event type, so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId`. Keep it that way in your handler, and send it to staff or nowhere.
+- With a `mailer`, the requester also gets the reply by email. Use the in-app notification as the nudge and leave the email to support.

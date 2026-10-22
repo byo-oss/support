@@ -1,0 +1,56 @@
+---
+title: Attachments
+description: Let customers and agents attach files to replies and notes, store them in S3 or an S3-compatible store, and control the size and types allowed.
+group: guides
+order: 4
+---
+
+Add `attachments` and customers and agents can attach files to replies. Agents can attach files to internal notes, and inbound mail keeps its attachment parts.
+
+```sh
+npm install @aws-sdk/client-s3
+```
+
+```ts title="lib/auth.ts"
+import { s3Storage } from "@byo-oss/support/s3";
+
+support({
+  attachments: {
+    storage: s3Storage({ bucket: "acme-support", region: "us-east-1" }),
+    // maxBytes: 10 * 1024 * 1024,
+    // allowedTypes: ["image/png", "application/pdf"],
+  },
+});
+```
+
+`s3Storage({ bucket, region, endpoint?, forcePathStyle?, credentials?, client? })` works with S3 and S3-compatible stores such as R2 and MinIO. Set `endpoint` for those, and `forcePathStyle` for MinIO. The role needs `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:ListBucket` on the bucket. Blobs are stored under `support/<organizationId or "_">/<attachmentId>`.
+
+`SupportStorage` is `{ put, get, delete, deletePrefix }`. Every method throws to fail the request. `get` resolves `null` for a missing key, and `delete` of a missing key resolves. Run `testSupportStorage` from `@byo-oss/support/testing` against your own. `memoryStorage()` from the same subpath is a store for tests.
+
+## Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `storage` | required | `s3Storage(...)`, or your own |
+| `maxBytes` | `10485760` (10 MiB) | Largest upload |
+| `allowedTypes` | png, jpeg, gif, webp, pdf, plain text, csv, zip | Allowed content types. HTML, SVG and XHTML are refused at boot even if listed |
+
+The default allowed types are `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `application/pdf`, `text/plain`, `text/csv` and `application/zip`.
+
+## Uploading
+
+`POST /support/upload?ticketId=…&filename=…` takes the file as the raw request body, with its type as `Content-Type`. Agents use `/support/agent/upload`, plus `internal=true` for a note.
+
+- A missing or over-limit `Content-Length` answers 413 `ATTACHMENT_TOO_LARGE`. The body is counted as it is read, so a header that lies can't store more than it claimed.
+- A type not in `allowedTypes` answers 415 `ATTACHMENT_TYPE_NOT_ALLOWED`.
+- The upload comes back unattached. Pass its id in `attachmentIds` (up to 10) on the next reply or note.
+
+## Binding
+
+Every id in `attachmentIds` must belong to the same ticket, be uploaded by the caller, be unattached, and match the audience: an `internal` upload only goes on a note. Otherwise the request answers `ATTACHMENT_NOT_USABLE`. The sweep deletes uploads still unattached after 24 hours.
+
+## Reading
+
+Attached files follow the ticket's read rule, and customers never get internal ones. An unattached file is readable only by its uploader and by agents. Files are served with `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox` and `Cache-Control: private, no-store`. Only png, jpeg, gif, webp and pdf keep their type. Everything else is served as `application/octet-stream`.
+
+In email, attachments go as a link to the ticket, not as files (see [Email](/docs/support/email)).

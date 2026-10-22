@@ -1,0 +1,147 @@
+---
+title: Quickstart
+description: Add the plugin, grant staff the support actions, migrate, add the client plugin and render the widget and the inbox in an existing better-auth app.
+group: get started
+order: 2
+---
+
+This takes an existing better-auth app to customers opening and following tickets, and agents working one queue. You need better-auth 1.7.7 or newer already set up with a database.
+
+## Install
+
+```sh
+npm install @byo-oss/support
+```
+
+Requires Node 20 or newer, `better-auth` 1.7.7 or newer (1.6 is not supported: its plugin API differs), `@better-auth/core` at the same version as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.0.0`. `zod` is a peer dependency, so support validates with your app's copy. An app still on zod 3 has to move to zod 4 first. The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+
+Optional peers, each behind its own import so the root never loads them:
+
+| Package | Needed for |
+|---|---|
+| `react` (>=18) | `@byo-oss/support/react` |
+| `@wraps.dev/email` | `wrapsMailer` from `@byo-oss/support/wraps` |
+| `@aws-sdk/client-s3` | `s3Storage` from `@byo-oss/support/s3`, and `wrapsInbound` |
+| `vitest` | `@byo-oss/support/testing` (ESM only) |
+
+In a monorepo, add `@byo-oss/support` as a direct dependency of the web app's package (not only of a shared server package): the app imports `@byo-oss/support/react`, and Tailwind's `@source` path points into that package's `node_modules`.
+
+<Steps>
+
+### Add the plugins
+
+`organization()` must come before `support()`: migrations create tables in plugin order, and `supportTicket` references `organization`. Create one organization for your team (the staff organization, see [Access](/docs/support/access#the-staff-organization)) and pass its id:
+
+```ts title="lib/auth.ts"
+import { betterAuth } from "better-auth";
+import { organization } from "better-auth/plugins/organization";
+import { support } from "@byo-oss/support";
+import { ac, roles } from "./access"; // step 2
+
+export const auth = betterAuth({
+  // ...your existing config
+  plugins: [
+    organization({ ac, roles }), // before support()
+    support({ staffOrganizationId: process.env.SUPPORT_STAFF_ORGANIZATION_ID }),
+  ],
+});
+```
+
+Without `staffOrganizationId` (and without your own `authorize`), every agent endpoint denies and the server logs one warning at boot. Pass `staffOrganizationId: null` to run without agents on purpose, with no warning. If the id is only known after boot, pass a function, `() => id | null | undefined`: it is called on every request that needs it.
+
+### Grant staff the support actions
+
+The organization plugin's default roles have none. Spread `supportStatements` into your access control and add `supportRoles` to the roles you create. Import both from `@byo-oss/support/client`: access files are often shared with browser code, and that entry loads none of the server's mail parsing.
+
+```ts title="lib/access.ts"
+import { createAccessControl } from "better-auth/plugins/access";
+import {
+  adminAc,
+  defaultStatements,
+  memberAc,
+  ownerAc,
+} from "better-auth/plugins/organization/access";
+import { supportRoles, supportStatements } from "@byo-oss/support/client";
+
+export const ac = createAccessControl({ ...defaultStatements, ...supportStatements });
+
+export const roles = {
+  owner: ac.newRole({ ...ownerAc.statements, ...supportRoles.owner }),
+  admin: ac.newRole({ ...adminAc.statements, ...supportRoles.admin }),
+  member: ac.newRole({ ...memberAc.statements, ...supportRoles.member }),
+};
+```
+
+`supportRoles` suggests `owner` and `admin` get all five `support` actions and `member` gets `read`, `reply` and `update`. Grant each role, custom roles included, only the actions its staff need. Support checks permissions, never role names. See [Access](/docs/support/access) for what each action allows.
+
+### Run the migration
+
+The plugin declares its tables; your existing better-auth workflow creates them:
+
+```sh
+npx @better-auth/cli migrate
+```
+
+Use `generate` instead of `migrate` for drizzle or prisma. If your auth config can't be loaded by the CLI, run the same migration from code with `getMigrations` from `better-auth/db/migration`. The tables depend on the options you pass, so run the migration again after you turn on `mailer` or `attachments`. See [Schema](/docs/support/schema).
+
+### Add the client plugin
+
+```ts title="lib/auth-client.ts"
+import { createAuthClient } from "better-auth/react";
+import { supportClient } from "@byo-oss/support/client";
+
+export const authClient = createAuthClient({
+  plugins: [supportClient()],
+});
+```
+
+### Drop in the components
+
+The widget goes at the right end of your header, for signed-in customers. The inbox goes on a staff-only page:
+
+```tsx title="components/support.tsx"
+"use client";
+import { SupportInbox, SupportWidget } from "@byo-oss/support/react";
+import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
+
+export function HeaderSupport({ organizationId }: { organizationId?: string }) {
+  const router = useRouter();
+  // organizationId: the customer's active organization, so tickets can be shared with teammates
+  return (
+    <SupportWidget
+      client={authClient}
+      organizationId={organizationId}
+      onNavigate={(href) => router.push(href)}
+    />
+  );
+}
+
+export function StaffQueue({ agents }: { agents: { id: string; name: string; image?: string | null }[] }) {
+  const router = useRouter();
+  // agents: staff-organization members whose role grants support:read, for the assignee and @mention pickers
+  return <SupportInbox client={authClient} agents={agents} onNavigate={(href) => router.push(href)} />;
+}
+```
+
+With the default `categories`, the widget opens each new ticket with a card per kind of support, so the customer picks one first. See [React components](/docs/support/react#kinds-of-support).
+
+`onNavigate` takes your router. Without it, links to your app inside messages use `location.assign`. Build `agents` from the staff organization's members whose role grants `support` `read`, see [Staff list](/docs/support/access#staff-list). Tailwind needs one line to generate the component classes, see [React components](/docs/support/react#tailwind).
+
+</Steps>
+
+## Open a ticket from server code
+
+The widget isn't required. Server code can open a ticket directly:
+
+```ts
+await auth.api.createSupportTicket({ headers, body: { subject, body } });
+```
+
+## Next
+
+- [Access](/docs/support/access) covers agents, customers and sessions, and how to build the staff list.
+- [React components](/docs/support/react) covers deep links, polling and labels.
+- [Email](/docs/support/email) turns on mail in and out.
+
+For a complete, runnable wiring, see the example app in [`examples/tanstack-start`](https://github.com/byo-oss/support/tree/main/examples/tanstack-start): TanStack Start with better-auth on SQLite and an end-to-end suite. Run it with `pnpm install`, `pnpm migrate`, `pnpm seed` and `pnpm dev` from that directory (Node 22.13 or newer). Its README has the details and the sign-ins.

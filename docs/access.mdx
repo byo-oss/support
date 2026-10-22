@@ -1,0 +1,119 @@
+---
+title: Access
+description: Who can read and reply to tickets, how the staff organization and its roles make agents, how sessions are accepted, and how to build the staff list.
+group: guides
+order: 1
+---
+
+Support has two kinds of user: customers, who see their own tickets and the ones shared with their organization, and agents, who are members of one staff organization whose role grants `support` actions. Every check reads better-auth's permissions, not role names.
+
+## The staff organization
+
+Your staff are members of one organization you choose, the staff organization. Pass its id as `staffOrganizationId`. Agents are its members whose role has `support` actions. A customer organization's owner is never an agent, even with `support` actions in their own organization: support checks roles only in the staff organization.
+
+To give the staff organization a fixed id, create it through the adapter with `forceAllowId`, plus a `member` row that makes someone its owner. Run it once, for example from a seed script:
+
+```ts title="scripts/seed.ts"
+const ctx = await auth.$context;
+const staffOrganizationId = "staff"; // what you pass as staffOrganizationId
+
+await ctx.adapter.create({
+  model: "organization",
+  forceAllowId: true,
+  data: { id: staffOrganizationId, name: "Support team", slug: "support-team", createdAt: new Date() },
+});
+await ctx.adapter.create({
+  model: "member",
+  data: { organizationId: staffOrganizationId, userId: ownerUserId, role: "owner", createdAt: new Date() },
+});
+```
+
+The `owner` role has every `support` action once you have granted them. The other route is to create the organization the normal way, from your admin UI or `auth.api.createOrganization`, and put the id it gets in `SUPPORT_STAFF_ORGANIZATION_ID`.
+
+## Support actions
+
+`support` has five actions:
+
+| Action | Allows |
+|---|---|
+| `read` | The queue and any ticket |
+| `reply` | Agent replies and notes |
+| `update` | Status, priority, assignee, tags, bulk update and merge |
+| `manage` | Canned replies |
+| `delete` | Deleting tickets |
+
+`supportRoles` suggests `owner` and `admin` get all five, and `member` gets `read`, `reply` and `update`. Grant each role, custom roles included, only the actions its staff need. Roles apply in every organization, but support checks them only in the staff organization, so a role elsewhere changes nothing.
+
+## Agents
+
+Agent endpoints call `authorize` with the staff organization id and the `support` actions they need. The default looks up the caller's `member` row in the staff organization and asks the organization plugin whether the role grants the action. It works whether or not the staff organization is the session's active one.
+
+`authorize` replaces that check on every agent endpoint. Its `organizationId` is always `staffOrganizationId`, never a ticket's organization. Without a staff organization (`null`), pass `isAgent` as well, or every assignment and @mention fails with `NOT_AN_AGENT`.
+
+`isAgent` decides who can be assigned a ticket or @mentioned. Its default is a member of the staff organization whose role has `support` `read`.
+
+## Customers
+
+A customer sees a ticket if they are its requester, or if the ticket is shared with an organization (`visibility: "organization"`) they are a current member of. A requester who leaves the organization keeps their own tickets, and teammates lose the shared ones at once.
+
+A teammate can read, reply and upload, and nothing else. Only the requester can solve, reopen, rate, share or mark a ticket seen.
+
+Tickets a customer can't see answer `TICKET_NOT_FOUND`, so existence isn't leaked.
+
+## Statuses and merging
+
+A new ticket is `open`. An agent reply sets `pending` unless the request sets a `status`. A customer reply on `pending` or `solved` reopens it. The requester can solve a ticket (from `open` or `pending`) and reopen it (from `solved`). Agents can set any status. The sweep closes `solved` tickets after `autoCloseAfter`. A `closed` ticket takes no replies (`TICKET_CLOSED`). Mail to it opens a new ticket with a `followup_of` event.
+
+An agent can merge a ticket into another with the same requester and the same organization. Messages, tags, attachments and deliveries move to the target. The stricter `visibility` (`private`) and `verified` (`false`) win, and the target keeps the later `lastMessageAt` of the two. The source is closed with `mergedIntoId`. Every endpoint that takes a ticket id follows `mergedIntoId`, with the access rule re-applied to the target. The exceptions are `mergeSupportTickets` and `deleteSupportTickets`, which act on the ids given.
+
+## Sessions
+
+`acceptSession` runs first on every session endpoint, with `kind` set to `"customer"` or `"agent"`. The default refuses sessions an admin is impersonating, reads included. A `false` answers 403 `SESSION_NOT_ACCEPTED`. Add your own credential rules, for example to refuse bearer sessions:
+
+```ts title="lib/auth.ts"
+support({
+  acceptSession: ({ session, headers }) =>
+    !session.session.impersonatedBy && !headers.get("authorization")?.startsWith("Bearer "),
+});
+```
+
+`acceptSession` only runs once a request has a session. An API key or bearer token on its own gives one only through a plugin that turns it into a session (better-auth's `bearer`, or API keys with sessions enabled). Without such a plugin, that request is unauthenticated and answered 401 before `acceptSession` runs.
+
+A guard of your own that runs before better-auth's handler (one that refuses impersonated sessions app-wide, say) answers support's requests first, so classify support's paths in it. The reads are `GET`, under your better-auth base path (`/api/auth` by default): `/support/my-tickets`, `/support/ticket`, `/support/attachment`, `/support/agent/tickets`, `/support/agent/ticket`, `/support/agent/tags`, `/support/agent/canned` and `/support/agent/attachment`. Every other support endpoint is `POST`. `supportPathMethods` from `@byo-oss/support/client` has the same map for code.
+
+## What customers get back
+
+Customers see one shape of ticket: `id`, `number`, `subject`, `status`, `priority`, `channel`, `organizationId`, `visibility`, `rating`, `createdAt`, `updatedAt`, `lastMessageAt`, `solvedAt`, `unread` and `isRequester`. `isRequester` is false for an organization teammate viewing a shared ticket, and the widget hides solve, reopen, rate and share for them. The server refuses those with 403.
+
+Messages come back as kind `reply`, plus `event` rows of type `status` and `merged`. Customers never get `replyToken`, `assigneeId`, `agentSeenAt`, `mentions`, notes, other events, `verified`, `emailMessageId` or internal attachments. Agents appear by `name` and `image` only.
+
+## Staff list
+
+`agents` fills the inbox's assignee and @mention pickers. Keep only the staff organization's members whose role grants `support: ["read"]`. That is the check `isAgent` makes, so anyone else would show up in the pickers and fail with `NOT_AN_AGENT` when picked. Derive it from your roles' permissions, never from role names. A member can hold several roles (`"admin,billing"`).
+
+On the server:
+
+```ts title="lib/support-agents.ts"
+import { roles } from "./access";
+
+const canRead = (role: string) =>
+  role.split(",").some((name) => roles[name.trim() as keyof typeof roles]?.authorize({ support: ["read"] }).success);
+
+const organization = await auth.api.getFullOrganization({ headers, query: { organizationId: staffOrganizationId } });
+const agents = (organization?.members ?? [])
+  .filter((member) => canRead(member.role))
+  .map((member) => ({ id: member.userId, name: member.user.name, image: member.user.image }));
+```
+
+In the browser, from a staff member's session, with the same `canRead`:
+
+```ts
+const { data } = await authClient.organization.listMembers({
+  query: { organizationId: staffOrganizationId, limit: 100 },
+});
+const agents = (data?.members ?? [])
+  .filter((member) => canRead(member.role))
+  .map((member) => ({ id: member.userId, name: member.user.name, image: member.user.image }));
+```
+
+Both read one page of members. `getFullOrganization` returns up to the organization plugin's `membershipLimit` (100 by default), and `listMembers` returns `limit` members and a `total`. With a larger staff organization, page through `listMembers` with `offset`.
