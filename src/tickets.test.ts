@@ -1067,10 +1067,13 @@ describe("addMessage", () => {
       ]);
       expect(events[0]).not.toHaveProperty("userId");
       expect(events[0]).toMatchObject({
-        organizationId: "org_1",
         actorId: AGENT,
         data: { ticketId: ticket.id, messageId: message.id },
       });
+      // events about a note name no customer organization to fan out to
+      for (const event of events) {
+        expect(event).not.toHaveProperty("organizationId");
+      }
       expect(events[1]).toMatchObject({
         userId: TEAMMATE,
         actorId: AGENT,
@@ -1099,6 +1102,8 @@ describe("addMessage", () => {
         "support.agent.mentioned",
       ]);
       expect(events[2]?.data).toMatchObject({ kind: "reply" });
+      // only events about a note drop the organization
+      expect(events[2]).toMatchObject({ organizationId: "org_1" });
     });
 
     it("an account-less requester's ticket events have no userId", async () => {
