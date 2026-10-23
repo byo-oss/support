@@ -28,7 +28,7 @@ Join a transaction with `runWithTransaction`, imported from `@better-auth/core/c
 | `support.note.added` | none | `{ ticketId, messageId }` |
 | `support.agent.mentioned` | the mentioned agent (one event each) | `{ ticketId, messageId, kind }` |
 
-Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`, so consumers that fan out by organization must skip `visibility: "private"`.
+Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one; left out of events about an internal note) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`, so consumers that fan out by organization must skip `visibility: "private"`.
 
 The types are `SupportEvent` and `SUPPORT_EVENT_TYPES`, both exported from the root.
 
@@ -111,5 +111,5 @@ Which events go where:
 
 - **Staff:** `support.ticket.created`, `support.customer.replied`, `support.ticket.assigned` (to the new assignee) and `support.agent.mentioned` (to the mentioned agent). Notify only members of the staff organization whose role grants `support` actions. Read members at send time, so a removed agent stops receiving them.
 - **The requester:** `support.agent.replied`, and `support.ticket.status_changed` if you want to tell them a ticket was solved. Route by `event.userId`.
-- **Never to customers: `support.note.added`.** An internal note has its own event type, so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId`. Keep it that way in your handler, and send it to staff or nowhere.
+- **Never to customers: `support.note.added`.** An internal note has its own event type, so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId` and, like `support.agent.mentioned` with `kind: "note"`, no `organizationId`, so a handler that fans events out to a customer organization has nothing to fan a note out by. Keep it that way in your handler, and send it to staff or nowhere.
 - With a `mailer`, the requester also gets the reply by email. Use the in-app notification as the nudge and leave the email to support.
