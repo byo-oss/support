@@ -574,7 +574,7 @@ Events fire after the write commits. Endpoint writes don't join a caller's trans
 | `support.note.added` | none | `{ ticketId, messageId }` |
 | `support.agent.mentioned` | the mentioned agent (one event each) | `{ ticketId, messageId, kind }` |
 
-Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`: consumers that fan out by organization must skip `visibility: "private"`.
+Every event also has `type`, `occurredAt`, `actorId`, `organizationId` (the ticket's, when it has one; left out of events about an internal note, see below) and `subject: { type: "supportTicket", id }`. The `userId` of an account-less requester is absent. A private ticket's events still carry its `organizationId`: consumers that fan out by organization must skip `visibility: "private"`.
 
 Wire them to [`@byo-oss/notifications`](https://github.com/byo-oss/notifications) with `createEventBus` from `@byo-oss/core`. Staff recipients are the staff organization's members whose role grants `support: ["read"]`, read when the event is sent; derive them from your roles' permissions, never from a list of role names:
 
@@ -653,7 +653,7 @@ Which events go where:
 
 - **Staff:** `support.ticket.created`, `support.customer.replied`, `support.ticket.assigned` (to the new assignee) and `support.agent.mentioned` (to the mentioned agent). Notify only members of the staff organization whose role grants `support` actions; read members at send time, so a removed agent stops receiving them.
 - **The requester:** `support.agent.replied`, and `support.ticket.status_changed` if you want to tell them a ticket was solved. Route by `event.userId`.
-- **Never to customers: `support.note.added`.** An internal note has its own event type so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId`; keep it that way in your handler, and send it to staff or nowhere.
+- **Never to customers: `support.note.added`.** An internal note has its own event type so that forwarding `support.agent.replied` to customers can't leak one. It carries no `userId` and, like `support.agent.mentioned` with `kind: "note"`, no `organizationId`, so a handler that fans events out to a customer organization has nothing to fan a note out by. Keep it that way in your handler, and send it to staff or nowhere. A test (`src/note-leaks.test.ts`) fails if a note's text, id or files appear in a customer response, an event or an email.
 - With a `mailer`, the requester also gets the reply by email. Use the in-app notification as the nudge and leave the email to support.
 
 ## API

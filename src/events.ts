@@ -22,7 +22,10 @@ export type SupportEventType = (typeof SUPPORT_EVENT_TYPES)[number];
  * carries ids, statuses and kinds only, never message bodies, and always the
  * ticket's `visibility` (`"private" | "organization"`) as of the event. A
  * private ticket's events still carry its `organizationId`: a consumer that
- * fans out by organization must skip `visibility: "private"`.
+ * fans out by organization must skip `visibility: "private"`. Events about an
+ * internal note (`support.note.added`, and `support.agent.mentioned` with
+ * `kind: "note"`) carry no `organizationId` at all, so there is no customer
+ * organization for a handler to fan them out to.
  *
  * | type | userId | data (plus `visibility`) |
  * |---|---|---|
@@ -48,7 +51,9 @@ export type SupportLogger = {
 /**
  * Builds a `SupportEvent` about a ticket: `occurredAt` now, subject the
  * ticket, `organizationId` from the ticket when it has one, and the ticket's
- * `visibility` added to `data`.
+ * `visibility` added to `data`. With `internal` (an event about a note) the
+ * `organizationId` is left out: the customer's organization must not be
+ * addressable from a staff-only event.
  */
 export function ticketEvent(
   type: SupportEventType,
@@ -58,6 +63,8 @@ export function ticketEvent(
     userId?: string | null;
     data: Record<string, unknown>;
     occurredAt?: Date;
+    /** The event is about an internal note: no `organizationId`. */
+    internal?: boolean;
   },
 ): SupportEvent {
   return {
@@ -65,7 +72,9 @@ export function ticketEvent(
     occurredAt: input.occurredAt ?? new Date(),
     actorId: input.actorId,
     ...(input.userId ? { userId: input.userId } : {}),
-    ...(ticket.organizationId ? { organizationId: ticket.organizationId } : {}),
+    ...(ticket.organizationId && !input.internal
+      ? { organizationId: ticket.organizationId }
+      : {}),
     subject: { type: "supportTicket", id: ticket.id },
     data: { ...input.data, visibility: ticket.visibility },
   };

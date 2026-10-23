@@ -335,6 +335,7 @@ export async function addMessage(
       ticketEvent("support.note.added", ticket, {
         actorId: input.actorId,
         data: ids,
+        internal: true,
       }),
     );
   }
@@ -345,6 +346,7 @@ export async function addMessage(
         actorId: input.actorId,
         userId: mentioned,
         data: { ...ids, kind },
+        internal: kind === "note",
       }),
     );
   }

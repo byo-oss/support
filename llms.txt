@@ -158,8 +158,8 @@ support({ onEvent: createEventBus([async (event): Promise<void> => { /* route */
 // support.ticket.merged       userId requester   { ticketId, sourceId, targetId }
 // support.customer.replied    userId requester   { ticketId, messageId, channel }
 // support.agent.replied       userId requester   { ticketId, messageId, status }
-// support.note.added          no userId          { ticketId, messageId }
-// support.agent.mentioned     userId the agent (one event each) { ticketId, messageId, kind }
+// support.note.added          no userId, no organizationId  { ticketId, messageId }
+// support.agent.mentioned     userId the agent (one event each); no organizationId when kind is "note"  { ticketId, messageId, kind }
 // P2: staff ← created, customer.replied: staff-org members whose role grants support:read (roles[name].authorize({ support: ["read"] }).success; never hard-coded role names), minus actorId, read at send time, auth.api.notify({ body: { userId, type, title, href } }) each (or the app's own notification layer); assigned and mentioned (notify userId = event.userId); requester ← agent.replied (notify userId = event.userId). NEVER forward support.note.added to a customer.
 
 ## Export

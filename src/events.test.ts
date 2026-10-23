@@ -285,11 +285,12 @@ describe("events from a real flow", () => {
     const [noteAdded] = ofType(s.events, "support.note.added");
     expect(noteAdded).toMatchObject({
       actorId: member,
-      organizationId: orgId,
       subject: { type: "supportTicket", id: first.id },
     });
-    // a note is about no one in particular: nobody to forward it to
+    // a note is about no one in particular: nobody to forward it to, and no
+    // customer organization to fan it out to
     expect(noteAdded).not.toHaveProperty("userId");
+    expect(noteAdded).not.toHaveProperty("organizationId");
     expect(noteAdded?.data).toEqual({
       ticketId: first.id,
       messageId: note.id,
@@ -298,11 +299,8 @@ describe("events from a real flow", () => {
 
     const [mentioned] = ofType(s.events, "support.agent.mentioned");
     expect(ofType(s.events, "support.agent.mentioned")).toHaveLength(1);
-    expect(mentioned).toMatchObject({
-      actorId: member,
-      userId: admin,
-      organizationId: orgId,
-    });
+    expect(mentioned).toMatchObject({ actorId: member, userId: admin });
+    expect(mentioned).not.toHaveProperty("organizationId");
     expect(mentioned?.data).toEqual({
       ticketId: first.id,
       messageId: note.id,
