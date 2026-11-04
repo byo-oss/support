@@ -7,6 +7,20 @@ order: 3
 
 Each section covers one release, newest first. Read the sections between your current version and the latest. The docs describe the latest published release. Sections marked next describe main, which isn't published yet.
 
+## 0.4.0
+
+Upgrading from 0.3.x needs no migration and no API change. The schema didn't change. One peer range is narrower, and one behaviour changes because of better-auth.
+
+- **The better-auth peer floor is now `^1.7.16`.** `better-auth` and `@better-auth/core` both need 1.7.16 or later, because 1.7.16 is a security release. Move `better-auth` and every `@better-auth/*` package in your app together to 1.7.16 or later, before or with this package:
+
+  ```sh
+  npm install better-auth@latest @better-auth/core@latest @byo-oss/support@latest
+  ```
+
+  The advisory that touches this package's features is GHSA-c85h-5mrr-mgx4 (organization roles with padded names), because your agents are members of the staff organization. See the [better-auth security release](https://better-auth.com/blog/security-release-2026-11-03) for the rest.
+
+- **Role values are trimmed and split on commas.** This comes from better-auth 1.7.16, not from this package. Support passes a staff member's stored role to the organization plugin's `hasPermission`, which now trims it and splits it on commas. A staff member stored as `"admin, owner"` now has the permissions of both roles, owner included, so they may gain `support` actions they didn't have. Before you upgrade, look for padded or comma-separated role values in the staff organization's `member` rows (and in pending `invitation` rows), and fix any that grant more than you intended.
+
 ## 0.3.0
 
 Upgrading from 0.2.0 needs no migration. The schema didn't change, and the package's peer dependencies are the same. Three things change for users.
