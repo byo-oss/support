@@ -22,7 +22,7 @@ Optional peers, each behind its own import so the root never loads them:
 | `react` (>=18) | `@byo-oss/support/react` |
 | `@wraps.dev/email` | `wrapsMailer` from `@byo-oss/support/wraps` |
 | `@aws-sdk/client-s3` | `s3Storage` from `@byo-oss/support/s3`, and `wrapsInbound` |
-| `vitest` (>=4.1.11) | `@byo-oss/support/testing` (ESM only) |
+| `vitest` (^4.1.12 \|\| >=5.0.3) | `@byo-oss/support/testing` (ESM only) |
 
 In a monorepo, add `@byo-oss/support` as a direct dependency of the web app's package (not only of a shared server package): the app imports `@byo-oss/support/react`, and Tailwind's `@source` path points into that package's `node_modules`.
 
