@@ -20,7 +20,7 @@ npm install @byo-oss/support
 npm install @byo-oss/support
 ```
 
-Requires Node 20 or newer, `better-auth` `^1.7.16` (1.6 is not supported: its plugin API differs), `@better-auth/core` at the same version as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.6.6`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. An app still on zod 3 has to move to zod 4 first (npm stops with `ERESOLVE`). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
+Requires Node 20.18.1 or newer, `better-auth` `^1.7.16` (1.6 is not supported: its plugin API differs), `@better-auth/core` at the same version as `better-auth` (better-auth already depends on it; install it yourself when your package manager is strict about peers) and `zod` `^4.6.6`. `zod` is a peer dependency, so support validates with your app's copy instead of bringing its own; npm and pnpm install it when your app doesn't list it (better-auth already depends on zod 4), and with Yarn you add it yourself. An app on zod older than 4.6.6 (zod 3 included) has to move to 4.6.6 or later first (npm stops with `ERESOLVE`). The better-auth `organization` plugin is required: the schema references `organization`, and your staff are an organization's members.
 
 Optional peers, each behind its own import so the root never loads them:
 
@@ -29,7 +29,7 @@ Optional peers, each behind its own import so the root never loads them:
 | `react` (>=18) | `@byo-oss/support/react` |
 | `@wraps.dev/email` | `wrapsMailer` from `@byo-oss/support/wraps` |
 | `@aws-sdk/client-s3` | `s3Storage` from `@byo-oss/support/s3`, and `wrapsInbound` |
-| `vitest` (>=3.2.6) | `@byo-oss/support/testing` (ESM only) |
+| `vitest` (>=4.1.11) | `@byo-oss/support/testing` (ESM only) |
 
 In a monorepo, add `@byo-oss/support` as a direct dependency of the web app's package (not only of a shared server package): the app imports `@byo-oss/support/react`, and Tailwind's `@source` path points into that package's `node_modules`.
 

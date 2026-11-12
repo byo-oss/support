@@ -4,5 +4,5 @@ minimumReleaseAgeExclude:
   - "@byo-oss/*"
 overrides:
   "@byo-oss/core": "file:./.tarballs/byo-oss-core-0.2.0.tgz"
-  "@byo-oss/mailer": "file:./.tarballs/byo-oss-mailer-0.1.0.tgz"
-  "@byo-oss/support": "file:./.tarballs/byo-oss-support-0.1.0.tgz"
+  "@byo-oss/mailer": "file:./.tarballs/byo-oss-mailer-0.2.0.tgz"
+  "@byo-oss/support": "file:./.tarballs/byo-oss-support-0.5.0.tgz"
