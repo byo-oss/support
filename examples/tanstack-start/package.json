@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@byo-oss/core": "^0.1.0",
+    "@byo-oss/core": "^0.2.0",
     "@byo-oss/mailer": "^0.1.0",
     "@byo-oss/support": "^0.1.0",
     "@tanstack/react-router": "^1.170.44",
