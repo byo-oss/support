@@ -7,6 +7,24 @@ order: 3
 
 Each section covers one release, newest first. Read the sections between your current version and the latest. The docs describe the latest published release. Sections marked next describe main, which isn't published yet.
 
+## 0.5.0
+
+Upgrading from 0.4.x needs no migration and no API change. The schema didn't change and no export, option or endpoint changed. Breaking under the conventions (§8.4) because the zod and vitest peers narrowed. The `@byo-oss/core`, postal-mime and mailauth dependency floors rose too.
+
+- **The zod peer floor is now `^4.6.6`.** zod 4.6.6 fixes GHSA-mrhx-c7xc-m3w5 (high severity). Support validates request input with your app's copy of zod, so that copy needs 4.6.6 or later. Move it before or with this package:
+
+  ```sh
+  npm install zod@latest @byo-oss/support@latest
+  ```
+
+- **`@byo-oss/core` is now `^0.2.0`.** It is a dependency of this package, not a peer. Core 0.2.0 only narrowed its better-auth peer to `^1.7.16`, which this package already requires. If your app also imports `@byo-oss/core` or `@byo-oss/notifications`, move them to releases that use core 0.2.0, so your package manager installs one copy of core instead of two.
+
+- **The optional `vitest` peer is now `^4.1.12 || >=5.0.3`.** This closes GHSA-5xrq-8626-4rwp (critical, affects vitest below 3.2.6 and 4.0.x), GHSA-82fw-gwwq-j7x9 (moderate), GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp (both in `@vitest/mocker`, which vitest pins exactly; they affect the last 4.1 patch before 4.1.12 and 5.0.0 to 5.0.2, fixed in 4.1.12 and 5.0.3), and drops vitest 3. Only the `@byo-oss/support/testing` entry point uses vitest, but the narrowed peer applies to every app that has vitest installed: it needs 4.1.12 or later on vitest 4, or 5.0.3 or later on vitest 5, even if it never imports `./testing` (npm stops with `ERESOLVE`). Move vitest before or with this package.
+
+- **The stated Node minimum is now 20.18.1 (`engines`),** as mailauth 8.0.6 and undici 7.30.2 declare.
+
+- **`postal-mime` is now `^4.2.1` and `mailauth` is `^8.0.6`.** Both are dependencies of this package, used only for inbound email. postal-mime 4.2.1 fixes GHSA-jh3p-792r-98gm and GHSA-q8wm-54mj-r36p, which affect every version up to 4.2.0 (they are listed on the postal-mime repository, so `npm audit` doesn't show them). mailauth 8.0.6 brings joi 18.3.2, which fixes GHSA-4528-x5fx-h6hg. The newer postal-mime reads some mail differently. That covers malformed mail (header block end, boundary matching, base64 or quoted-printable `message/rfc822` parts kept as attachments), and in well-formed mail the text of inline forwarded messages and text taken from HTML with multi-line `<style>`/`<script>` blocks. Support stores `email.text`, so those messages can read differently. Apps that only use the package's inbound sources don't need to change anything.
+
 ## 0.4.0
 
 Upgrading from 0.3.x needs no migration and no API change. The schema didn't change. One peer range is narrower, and one behaviour changes because of better-auth.
